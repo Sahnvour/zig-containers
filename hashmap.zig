@@ -134,14 +134,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             inserted: bool,
         };
 
-        /// Insert and entry in the map with precomputed hash. Assumes it is not already present.
-        pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
-            // TODO assert not contains
-            try self.ensureCapacity();
-
-            assert(self.buckets.len >= 0);
-            assert(isPowerOfTwo(self.buckets.len));
-
+        fn internalPut(self: *Self, key: K, value: V, hash: Size) void {
             const mask = self.buckets.len - 1;
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
@@ -158,6 +151,17 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             self.entries[index] = KV{ .key = key, .value = value };
         }
 
+        /// Insert and entry in the map with precomputed hash. Assumes it is not already present.
+        pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
+            // TODO assert not contains
+            try self.ensureCapacity();
+
+            assert(self.buckets.len >= 0);
+            assert(isPowerOfTwo(self.buckets.len));
+
+            self.internalPut(key, value, hash);
+        }
+
         /// Insert an entry in the map. Assumes it is not already present.
         pub fn put(self: *Self, key: K, value: V) !void {
             // TODO assert not contains
@@ -167,20 +171,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             assert(isPowerOfTwo(self.buckets.len));
 
             const hash = hashu32(key); // TODO hash &= 0x1, and bucket.hash==0 indicating empty bucket ?
-            const mask = self.buckets.len - 1;
-            var bucket_index = hash & mask;
-            var bucket = &self.buckets[bucket_index];
-
-            while (bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
-                bucket = &self.buckets[bucket_index];
-            }
-
-            const index = self.size;
-            self.size += 1;
-
-            bucket.hash = hash;
-            bucket.index = index;
-            self.entries[index] = KV{ .key = key, .value = value };
+            self.internalPut(key, value, hash);
         }
 
         fn internalGet(self: *const Self, key: K, hash: Size) ?*V {
