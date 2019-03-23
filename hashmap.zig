@@ -256,9 +256,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             }
 
             if (self.size * 5 >= self.buckets.len * 3) {
-                warn("size {} cap {}\n", self.size, self.buckets.len);
-                unreachable; // TODO
-                // TODO check we will not grow over u32 size
+                try self.grow();
             }
         }
 
@@ -276,23 +274,38 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
         }
 
         fn grow(self: *Self) !void {
+            assert(self.buckets.len < std.math.maxInt(Size) / 2);
             const new_capacity = self.buckets.len * 2;
-            const new_entries = try self.allocator.alloc(KV, new_capacity);
-            const new_buckets = try self.allocator.alloc(Bucket, new_capacity); // TODO only alloc 60% of capacity
 
-            mem.copy(KV, new_entries[0..self.size], self.entries[0..self.size]);
-            self.allocator.free(self.entries);
+            const new_entries = try self.allocator.alloc(KV, new_capacity); // TODO only alloc 60% of capacity
+            // If by any chance a realloc was successful in extending the already used memory, no need to copy and free.
+            if (new_entries.ptr != self.entries.ptr) {
+                mem.copy(KV, new_entries[0..self.size], self.entries[0..self.size]);
+                self.allocator.free(self.entries);
+            }
             self.entries = new_entries;
 
+            // We don't care about the old bucket data, so we can free it first to reduce memory pressure.
             self.allocator.free(self.buckets);
+            const new_buckets = try self.allocator.alloc(Bucket, new_capacity);
             self.buckets = new_buckets;
             self.initBuckets();
             self.rehash();
         }
 
         fn rehash(self: *Self) void {
-            for (self.entries[0..self.size]) |entry| {
-                unreachable;
+            for (self.entries[0..self.size]) |entry, i| {
+                const mask = self.buckets.len - 1;
+                const hash = hashu32(entry.key);
+                var bucket_index = hash & mask;
+                var bucket = &self.buckets[bucket_index];
+
+                while (bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
+                    bucket = &self.buckets[bucket_index];
+                }
+
+                bucket.hash = hash;
+                bucket.index = @intCast(Size, i);
             }
         }
     };
@@ -411,5 +424,36 @@ test "put and get with long collision chain" {
     i = 0;
     while (i < 16) : (i += 1) {
         expectEqual(map.getHashed(i, 0x12345678).?.*, i);
+    }
+}
+
+test "grow" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    const growTo = 12456;
+
+    var i: u32 = 0;
+    while (i < growTo) : (i += 1) {
+        try map.put(i, i);
+    }
+    // this depends on the maximum load factor
+    // warn("\ncap {} next {}\n", map.capacity(), roundToNextPowerOfTwo(growTo));
+    // expect(map.capacity() == roundToNextPowerOfTwo(growTo));
+    expectEqual(map.size, growTo);
+
+    i = 0;
+    for (map.toSliceConst()) |kv| {
+        expectEqual(kv.key, kv.value);
+        i += 1;
+    }
+    expectEqual(i, growTo);
+
+    i = 0;
+    while (i < growTo) : (i += 1) {
+        expectEqual(map.get(i).?.*, i);
     }
 }
