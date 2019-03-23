@@ -218,32 +218,48 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             return self.internalGet(key, hash);
         }
 
-        /// Remove an element. Assumes it is present.
-        pub fn remove(self: *Self, key: K) bool {
+        /// Remove the value associated with key. Assumes it is present.
+        pub fn remove(self: *Self, key: K) void {
             assert(self.size > 0);
 
-            const mask = self.buckets.len - 1;
+            const mask = @intCast(Size, self.buckets.len - 1);
             const hash = hashu32(key);
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
 
-            while (bucket.hash != hash) : (bucket_index = (bucket_index + 1) & mask) {
+            var entry: *KV = undefined;
+            const entry_index = while (bucket.index != Bucket.Empty) : ({
+                bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
-            }
+            }) {
+                if (bucket.hash == hash) {
+                    entry = &self.entries[bucket.index];
+                    if (entry.key == key) {
+                        break bucket.index;
+                    }
+                }
+            } else unreachable;
 
-            var entry = &self.entries[bucket.index];
-            while (entry.key != key) : (bucket_index = (bucket_index + 1) & mask) {
-                bucket = &self.buckets[bucket_index];
-                assert(bucket.index != Bucket.Empty);
-                assert(bucket.hash == hash);
-                entry = &self.entries[bucket.index];
-            }
+            // TODO tombstone ?
+            bucket.index = Bucket.Empty - 1;
+            bucket.hash = undefined;
 
             self.size -= 1;
-            const entry_index = bucket.index;
             if (entry_index != self.size) {
+                // Simply move the last element
                 entry.* = self.entries[self.size];
-                // TODO update last entry bucket index
+
+                // And update its bucket accordingly.
+                const moved_index = self.size;
+                const moved_hash = hashu32(entry.key);
+                bucket_index = moved_hash & mask;
+                bucket = &self.buckets[bucket_index];
+                while (bucket.index != moved_index) {
+                    bucket_index = (bucket_index + 1) & mask;
+                    bucket = &self.buckets[bucket_index];
+                }
+                assert(bucket.hash == moved_hash);
+                bucket.index = entry_index;
             }
         }
 
@@ -450,5 +466,95 @@ test "grow" {
     i = 0;
     while (i < growTo) : (i += 1) {
         expectEqual(map.get(i).?.*, i);
+    }
+}
+
+test "remove" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        try map.put(i, i);
+    }
+
+    i = 0;
+    while (i < 16) : (i += 1) {
+        if (i % 3 == 0) {
+            map.remove(i);
+        }
+    }
+    expectEqual(map.size, 10);
+    for (map.toSliceConst()) |kv| {}
+
+    i = 0;
+    while (i < 16) : (i += 1) {
+        if (i % 3 == 0) {
+            expectEqual(map.get(i), null);
+        } else {
+            expectEqual(map.get(i).?.*, i);
+        }
+    }
+}
+
+test "reverse removes" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        try map.put(i, i);
+    }
+
+    i = 16;
+    while (i > 0) : (i -= 1) {
+        map.remove(i - 1);
+        expectEqual(map.get(i - 1), null);
+        var j: u32 = 0;
+        while (j < i - 1) : (j += 1) {
+            expectEqual(map.get(j).?.*, j);
+        }
+    }
+
+    expectEqual(map.size, 0);
+}
+
+test "multiple removes on same buckets" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        try map.put(i, i);
+    }
+
+    map.remove(7);
+    map.remove(15);
+    map.remove(14);
+    map.remove(13);
+    expectEqual(map.get(7), null);
+    expectEqual(map.get(15), null);
+    expectEqual(map.get(14), null);
+    expectEqual(map.get(13), null);
+
+    i = 0;
+    while (i < 13) : (i += 1) {
+        if (i == 7) {
+            expectEqual(map.get(i), null);
+        } else {
+            expectEqual(map.get(i).?.*, i);
+        }
+    }
+    for (map.toSliceConst()) |kv| {
+        warn("\n{}", kv);
     }
 }
