@@ -60,6 +60,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
     return struct {
         const Self = @This();
 
+        // TODO at least one slice is unnecessary
         entries: []KV,
         buckets: []Bucket,
         size: Size,
@@ -91,6 +92,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
         pub fn deinit(self: *Self) void {
             self.allocator.free(self.buckets);
             self.allocator.free(self.entries);
+            self.* = undefined;
         }
 
         pub fn reserve(self: *Self, cap: Size) !void {
@@ -132,15 +134,14 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             inserted: bool,
         };
 
-        /// Insert an entry in the map. Assumes it is not already present.
-        pub fn put(self: *Self, key: K, value: V) !void {
+        /// Insert and entry in the map with precomputed hash. Assumes it is not already present.
+        pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
             // TODO assert not contains
             try self.ensureCapacity();
 
             assert(self.buckets.len >= 0);
             assert(isPowerOfTwo(self.buckets.len));
 
-            const hash = hashu32(key);
             const mask = self.buckets.len - 1;
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
@@ -155,6 +156,61 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             bucket.hash = hash;
             bucket.index = index;
             self.entries[index] = KV{ .key = key, .value = value };
+        }
+
+        /// Insert an entry in the map. Assumes it is not already present.
+        pub fn put(self: *Self, key: K, value: V) !void {
+            // TODO assert not contains
+            try self.ensureCapacity();
+
+            assert(self.buckets.len >= 0);
+            assert(isPowerOfTwo(self.buckets.len));
+
+            const hash = hashu32(key); // TODO hash &= 0x1, and bucket.hash==0 indicating empty bucket ?
+            const mask = self.buckets.len - 1;
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+
+            while (bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
+                bucket = &self.buckets[bucket_index];
+            }
+
+            const index = self.size;
+            self.size += 1;
+
+            bucket.hash = hash;
+            bucket.index = index;
+            self.entries[index] = KV{ .key = key, .value = value };
+        }
+
+        /// Get an optional pointer to the value associated with key and precomputed hash, if present.
+        pub fn getHashed(self: *const Self, key: K, hash: Size) ?*V {
+            if (self.size == 0) {
+                return null; // TODO better without branch ?
+            }
+
+            const mask: Size = @intCast(Size, self.buckets.len) - 1;
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+
+            while (bucket.hash != hash and bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
+                bucket = &self.buckets[bucket_index];
+            }
+
+            var entry_index = bucket.index;
+            var entry = &self.entries[entry_index];
+            while (entry.key != key) {
+                // The entry at the bucket is not the one we're looking for, now probe through the collision chain.
+                entry_index = (entry_index + 1) & mask;
+                entry = &self.entries[entry_index];
+                if (bucket.hash != hash or bucket.index == Bucket.Empty) {
+                    return null;
+                }
+            }
+
+            // std.debug.warn("found {}\n", bucket);
+            // std.debug.warn("{}\n", entry);
+            return &entry.value;
         }
 
         /// Get an optional pointer to the value associated with key, if present.
@@ -212,11 +268,12 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
         }
 
         fn ensureCapacity(self: *Self) !void {
-            if (self.size == 0) {
+            if (self.capacity() == 0) {
                 try self.setCapacity(16);
             }
 
             if (self.size * 5 >= self.buckets.len * 3) {
+                warn("size {} cap {}\n", self.size, self.buckets.len);
                 unreachable; // TODO
                 // TODO check we will not grow over u32 size
             }
@@ -321,4 +378,47 @@ test "clear" {
     expect(map.size == 0);
     expect(map.capacity() == cap);
     expect(map.get(1) == null);
+}
+
+test "put and get with precomputed hash" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var i: u32 = 0;
+    while (i < 8) : (i += 1) {
+        try map.putHashed(i, i * 3 + 1, hashu32(i));
+    }
+
+    i = 0;
+    while (i < 8) : (i += 1) {
+        expect(map.get(i).?.* == i * 3 + 1);
+    }
+
+    i = 0;
+    while (i < 8) : (i += 1) {
+        expect(map.getHashed(i, hashu32(i)).?.* == i * 3 + 1);
+    }
+}
+
+test "get with long collision chain" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+    try map.reserve(32);
+
+    // Using a fixed arbitrary hash for every value, we force collisions.
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        try map.putHashed(i, i, 0x12345678);
+    }
+
+    i = 0;
+    while (i < 16) : (i += 1) {
+        expect(map.getHashed(i, 0x12345678).?.* == i);
+    }
 }
