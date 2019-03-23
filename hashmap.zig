@@ -41,7 +41,8 @@ pub fn isPowerOfTwo(i: var) bool {
     return i & (i - 1) == 0;
 }
 
-pub fn roundToNextPowerOfTwo(comptime T: type, n: T) T {
+pub fn roundToNextPowerOfTwo(n: var) u32 {
+    const T = @typeOf(n);
     // TODO generate bit twiddling hacks with inline for based on type size
     if (T == u32) {
         var m = n;
@@ -53,7 +54,9 @@ pub fn roundToNextPowerOfTwo(comptime T: type, n: T) T {
         m |= m >> 16;
         m += 1;
         return m;
-    } else @compileError("TODO");
+    } else {
+        return roundToNextPowerOfTwo(@intCast(u32, n)); // TODO
+    }
 }
 
 pub fn HashMap(comptime K: type, comptime V: type) type {
@@ -100,7 +103,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
                 return;
             }
 
-            const new_cap = roundToNextPowerOfTwo(Size, cap);
+            const new_cap = roundToNextPowerOfTwo(cap);
             if (self.size > 0) {
                 unreachable; // TODO
             } else {
@@ -296,6 +299,14 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 }
 
 const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+
+test "round to next power of two" {
+    expectEqual(roundToNextPowerOfTwo(3), 4);
+    expectEqual(roundToNextPowerOfTwo(13), 16);
+    expectEqual(roundToNextPowerOfTwo(17), 32);
+}
+
 test "basic usage" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
@@ -325,7 +336,7 @@ test "basic usage" {
             sum += j.*;
         } else unreachable;
     }
-    expect(total == sum);
+    expectEqual(total, sum);
 }
 
 test "reserve" {
@@ -336,8 +347,8 @@ test "reserve" {
     defer map.deinit();
 
     try map.reserve(129);
-    expect(map.capacity() == 256);
-    expect(map.size == 0);
+    expectEqual(map.capacity(), 256);
+    expectEqual(map.size, 0);
 }
 
 test "clear" {
@@ -348,16 +359,16 @@ test "clear" {
     defer map.deinit();
 
     try map.put(1, 1);
-    expect(map.get(1).?.* == 1);
-    expect(map.size == 1);
+    expectEqual(map.get(1).?.*, 1);
+    expectEqual(map.size, 1);
 
     const cap = map.capacity();
     expect(cap > 0);
 
     map.clear();
-    expect(map.size == 0);
-    expect(map.capacity() == cap);
-    expect(map.get(1) == null);
+    expectEqual(map.size, 0);
+    expectEqual(map.capacity(), cap);
+    expectEqual(map.get(1), null);
 }
 
 test "put and get with precomputed hash" {
@@ -374,16 +385,16 @@ test "put and get with precomputed hash" {
 
     i = 0;
     while (i < 8) : (i += 1) {
-        expect(map.get(i).?.* == i * 3 + 1);
+        expectEqual(map.get(i).?.*, i * 3 + 1);
     }
 
     i = 0;
     while (i < 8) : (i += 1) {
-        expect(map.getHashed(i, hashu32(i)).?.* == i * 3 + 1);
+        expectEqual(map.getHashed(i, hashu32(i)).?.*, i * 3 + 1);
     }
 }
 
-test "get with long collision chain" {
+test "put and get with long collision chain" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
@@ -399,6 +410,6 @@ test "get with long collision chain" {
 
     i = 0;
     while (i < 16) : (i += 1) {
-        expect(map.getHashed(i, 0x12345678).?.* == i);
+        expectEqual(map.getHashed(i, 0x12345678).?.*, i);
     }
 }
