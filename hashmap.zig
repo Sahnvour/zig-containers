@@ -183,12 +183,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             self.entries[index] = KV{ .key = key, .value = value };
         }
 
-        /// Get an optional pointer to the value associated with key and precomputed hash, if present.
-        pub fn getHashed(self: *const Self, key: K, hash: Size) ?*V {
-            if (self.size == 0) {
-                return null; // TODO better without branch ?
-            }
-
+        fn internalGet(self: *const Self, key: K, hash: Size) ?*V {
             const mask: Size = @intCast(Size, self.buckets.len) - 1;
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
@@ -213,29 +208,23 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             return &entry.value;
         }
 
+        /// Get an optional pointer to the value associated with key and precomputed hash, if present.
+        pub fn getHashed(self: *const Self, key: K, hash: Size) ?*V {
+            if (self.size == 0) {
+                return null; // TODO better without branch ?
+            }
+
+            return self.internalGet(key, hash);
+        }
+
         /// Get an optional pointer to the value associated with key, if present.
         pub fn get(self: *const Self, key: K) ?*V {
             if (self.size == 0) {
                 return null; // TODO better without branch ?
             }
 
-            const mask = self.buckets.len - 1;
             const hash = hashu32(key);
-            var bucket_index = hash & mask;
-            var bucket = &self.buckets[bucket_index];
-
-            while (bucket.hash != hash and bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
-                bucket = &self.buckets[bucket_index];
-            }
-
-            const entry = &self.entries[bucket.index];
-            if (entry.key != key) {
-                return null;
-            }
-
-            // std.debug.warn("found {}\n", bucket);
-            // std.debug.warn("{}\n", entry);
-            return &entry.value;
+            return self.internalGet(key, hash);
         }
 
         /// Remove an element. Assumes it is present.
