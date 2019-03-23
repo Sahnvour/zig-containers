@@ -142,7 +142,8 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
 
-            while (bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
+            while (bucket.index != Bucket.Empty) {
+                bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
             }
 
@@ -179,27 +180,23 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 
         fn internalGet(self: *const Self, key: K, hash: Size) ?*V {
             const mask: Size = @intCast(Size, self.buckets.len) - 1;
+
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
-
-            while (bucket.hash != hash and bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
+            while (bucket.index != Bucket.Empty) : ({
+                bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
-            }
-
-            var entry_index = bucket.index;
-            var entry = &self.entries[entry_index];
-            while (entry.key != key) {
-                // The entry at the bucket is not the one we're looking for, now probe through the collision chain.
-                entry_index = (entry_index + 1) & mask;
-                entry = &self.entries[entry_index];
-                if (bucket.hash != hash or bucket.index == Bucket.Empty) {
-                    return null;
+            }) {
+                if (bucket.hash == hash) {
+                    const entry_index = bucket.index;
+                    const entry = &self.entries[entry_index];
+                    if (entry.key == key) {
+                        return &entry.value;
+                    }
                 }
             }
 
-            // std.debug.warn("found {}\n", bucket);
-            // std.debug.warn("{}\n", entry);
-            return &entry.value;
+            return null;
         }
 
         /// Get an optional pointer to the value associated with key and precomputed hash, if present.
@@ -328,7 +325,7 @@ test "basic usage" {
     defer map.deinit();
 
     const count = 5;
-    var i: u32 = 1;
+    var i: u32 = 0;
     var total: u32 = 0;
     while (i < count) : (i += 1) {
         try map.put(i, i);
@@ -341,13 +338,11 @@ test "basic usage" {
     }
     expect(sum == total);
 
-    i = 1;
+    i = 0;
     sum = 0;
     while (i < count) : (i += 1) {
-        if (map.get(i)) |j| {
-            expect(i == j.*);
-            sum += j.*;
-        } else unreachable;
+        expectEqual(map.get(i).?.*, i);
+        sum += map.get(i).?.*;
     }
     expectEqual(total, sum);
 }
