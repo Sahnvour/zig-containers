@@ -174,7 +174,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             assert(self.buckets.len >= 0);
             assert(isPowerOfTwo(self.buckets.len));
 
-            const hash = hashu32(key); // TODO hash &= 0x1, and bucket.hash==0 indicating empty bucket ?
+            const hash = hashu32(key); // TODO hash |= 0x1, and bucket.hash==0 indicating empty bucket ?
             self.internalPut(key, value, hash);
         }
 
@@ -216,6 +216,11 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 
             const hash = hashu32(key);
             return self.internalGet(key, hash);
+        }
+
+        /// Return true if there is a value associated with key in the map.
+        pub fn contains(self: *const Self, key: K) bool {
+            return self.get(key) != null;
         }
 
         /// Remove the value associated with key. Assumes it is present.
@@ -392,7 +397,7 @@ test "clear" {
     map.clear();
     expectEqual(map.size, 0);
     expectEqual(map.capacity(), cap);
-    expectEqual(map.get(1), null);
+    expect(!map.contains(1));
 }
 
 test "put and get with precomputed hash" {
@@ -493,7 +498,7 @@ test "remove" {
     i = 0;
     while (i < 16) : (i += 1) {
         if (i % 3 == 0) {
-            expectEqual(map.get(i), null);
+            expect(!map.contains(i));
         } else {
             expectEqual(map.get(i).?.*, i);
         }
@@ -515,7 +520,7 @@ test "reverse removes" {
     i = 16;
     while (i > 0) : (i -= 1) {
         map.remove(i - 1);
-        expectEqual(map.get(i - 1), null);
+        expect(!map.contains(i - 1));
         var j: u32 = 0;
         while (j < i - 1) : (j += 1) {
             expectEqual(map.get(j).?.*, j);
@@ -541,20 +546,26 @@ test "multiple removes on same buckets" {
     map.remove(15);
     map.remove(14);
     map.remove(13);
-    expectEqual(map.get(7), null);
-    expectEqual(map.get(15), null);
-    expectEqual(map.get(14), null);
-    expectEqual(map.get(13), null);
+    expect(!map.contains(7));
+    expect(!map.contains(15));
+    expect(!map.contains(14));
+    expect(!map.contains(13));
 
     i = 0;
     while (i < 13) : (i += 1) {
         if (i == 7) {
-            expectEqual(map.get(i), null);
+            expect(!map.contains(i));
         } else {
             expectEqual(map.get(i).?.*, i);
         }
     }
-    for (map.toSliceConst()) |kv| {
-        warn("\n{}", kv);
+
+    try map.put(15, 15);
+    try map.put(13, 13);
+    try map.put(14, 14);
+    try map.put(7, 7);
+    i = 0;
+    while (i < 16) : (i += 1) {
+        expectEqual(map.get(i).?.*, i);
     }
 }
