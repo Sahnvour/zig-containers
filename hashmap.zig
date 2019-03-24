@@ -128,15 +128,6 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             return @intCast(Size, self.buckets.len);
         }
 
-        /// Result of a put operation.
-        const PutResult = struct {
-            /// Pointer to the new entry.
-            kv: *KV,
-
-            /// True if the key did not exist before put.
-            inserted: bool,
-        };
-
         fn internalPut(self: *Self, key: K, value: V, hash: Size) void {
             const mask = self.buckets.len - 1;
             var bucket_index = hash & mask;
@@ -155,7 +146,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             self.entries[index] = KV{ .key = key, .value = value };
         }
 
-        /// Insert and entry in the map with precomputed hash. Assumes it is not already present.
+        /// Insert an entry in the map with precomputed hash. Assumes it is not already present.
         pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
             // TODO assert not contains
             try self.ensureCapacity();
@@ -176,6 +167,41 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 
             const hash = hashu32(key); // TODO hash |= 0x1, and bucket.hash==0 indicating empty bucket ?
             self.internalPut(key, value, hash);
+        }
+
+        /// Insert an entry if the associated key is not already present, otherwise updates preexisting value.
+        /// Returns true if the key was already present.
+        pub fn putOrUpdate(self: *Self, key: K, value: V) !bool {
+            try self.ensureCapacity(); // TODO move after the get part
+
+            // Same code as internalGet except we updated the value if found.
+            const mask: Size = @intCast(Size, self.buckets.len) - 1;
+            const hash = hashu32(key);
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+            while (bucket.index != Bucket.Empty) : ({
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
+            }) {
+                if (bucket.hash == hash) {
+                    const entry_index = bucket.index;
+                    const entry = &self.entries[entry_index];
+                    if (entry.key == key) {
+                        entry.value = value;
+                        return true;
+                    }
+                }
+            }
+
+            // No existing key found, put it there.
+            const index = self.size;
+            self.size += 1;
+
+            bucket.hash = hash;
+            bucket.index = index;
+            self.entries[index] = KV{ .key = key, .value = value };
+
+            return false;
         }
 
         fn internalGet(self: *const Self, key: K, hash: Size) ?*V {
@@ -268,6 +294,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             }
         }
 
+        // TODO ensureCapacity based on *wanted* size so we can allocate just the needed KV and no more
         fn ensureCapacity(self: *Self) !void {
             if (self.capacity() == 0) {
                 try self.setCapacity(16);
@@ -567,5 +594,33 @@ test "multiple removes on same buckets" {
     i = 0;
     while (i < 16) : (i += 1) {
         expectEqual(map.get(i).?.*, i);
+    }
+}
+
+test "putOrUpdate" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        _ = try map.putOrUpdate(i, i);
+    }
+
+    i = 0;
+    while (i < 16) : (i += 1) {
+        expectEqual(map.get(i).?.*, i);
+    }
+
+    i = 0;
+    while (i < 16) : (i += 1) {
+        expect(try map.putOrUpdate(i, i * 16 + 1));
+    }
+
+    i = 0;
+    while (i < 16) : (i += 1) {
+        expectEqual(map.get(i).?.*, i * 16 + 1);
     }
 }
