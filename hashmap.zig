@@ -169,12 +169,12 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             self.internalPut(key, value, hash);
         }
 
-        /// Insert an entry if the associated key is not already present, otherwise updates preexisting value.
+        /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
         /// Returns true if the key was already present.
         pub fn putOrUpdate(self: *Self, key: K, value: V) !bool {
             try self.ensureCapacity(); // TODO move after the get part
 
-            // Same code as internalGet except we updated the value if found.
+            // Same code as internalGet except we update the value if found.
             const mask: Size = @intCast(Size, self.buckets.len) - 1;
             const hash = hashu32(key);
             var bucket_index = hash & mask;
@@ -360,7 +360,10 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
 test "round to next power of two" {
+    expectEqual(roundToNextPowerOfTwo(1), 1);
+    expectEqual(roundToNextPowerOfTwo(2), 2);
     expectEqual(roundToNextPowerOfTwo(3), 4);
+    expectEqual(roundToNextPowerOfTwo(4), 4);
     expectEqual(roundToNextPowerOfTwo(13), 16);
     expectEqual(roundToNextPowerOfTwo(17), 32);
 }
@@ -402,6 +405,8 @@ test "reserve" {
     var map = HashMap(u32, u32).init(&direct_allocator.allocator);
     defer map.deinit();
 
+    try map.reserve(9);
+    expectEqual(map.capacity(), 16);
     try map.reserve(129);
     expectEqual(map.capacity(), 256);
     expectEqual(map.size, 0);
