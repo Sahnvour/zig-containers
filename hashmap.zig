@@ -98,16 +98,24 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             self.* = undefined;
         }
 
-        pub fn reserve(self: *Self, cap: Size) !void {
-            if (cap <= self.capacity()) {
+        pub fn reserve(self: *Self, size: Size) !void {
+            if (size <= self.capacity()) {
                 return;
             }
 
-            const new_cap = roundToNextPowerOfTwo(cap);
+            // Get a new capacity that satisfies the constraint of the maximum load factor.
+            const new_capacity = blk: {
+                var cap = roundToNextPowerOfTwo(size);
+                if (!isUnderMaxLoadFactor(size, cap)) {
+                    cap *= 2;
+                }
+                break :blk cap;
+            };
+
             if (self.size > 0) {
-                unreachable; // TODO
+                try self.grow(new_capacity);
             } else {
-                try self.setCapacity(new_cap);
+                try self.setCapacity(new_capacity);
             }
         }
 
@@ -294,12 +302,16 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             }
         }
 
+        fn isUnderMaxLoadFactor(size: Size, cap: Size) bool {
+            return size * 5 < cap * 3;
+        }
+
         fn ensureCapacity(self: *Self) !void {
             if (self.capacity() == 0) {
                 try self.setCapacity(16);
             }
 
-            if (self.size * 5 >= self.buckets.len * 3) {
+            if (!isUnderMaxLoadFactor(self.size, self.capacity())) {
                 assert(self.buckets.len < std.math.maxInt(Size) / 2);
                 const new_capacity = @intCast(Size, self.buckets.len * 2);
                 try self.grow(new_capacity);
@@ -320,16 +332,19 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
         }
 
         fn grow(self: *Self, new_capacity: Size) !void {
+            assert(isPowerOfTwo(new_capacity));
+            // We don't care about the old bucket data, so we can free it first to reduce memory pressure.
+            self.allocator.free(self.buckets);
+
             const new_entries = try self.allocator.alloc(KV, new_capacity); // TODO only alloc 60% of capacity
             // If by any chance a realloc was successful in extending the already used memory, no need to copy and free.
+            // TODO check that this is possible with the allocator interface
             if (new_entries.ptr != self.entries.ptr) {
                 mem.copy(KV, new_entries[0..self.size], self.entries[0..self.size]);
                 self.allocator.free(self.entries);
             }
             self.entries = new_entries;
 
-            // We don't care about the old bucket data, so we can free it first to reduce memory pressure.
-            self.allocator.free(self.buckets);
             const new_buckets = try self.allocator.alloc(Bucket, new_capacity);
             self.buckets = new_buckets;
             self.initBuckets();
@@ -502,6 +517,33 @@ test "grow" {
     while (i < growTo) : (i += 1) {
         expectEqual(map.get(i).?.*, i);
     }
+}
+
+test "reserve with existing elements" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    try map.put(0, 0);
+    expectEqual(map.size, 1);
+    expectEqual(map.capacity(), 16);
+
+    try map.reserve(65);
+    expectEqual(map.size, 1);
+    expectEqual(map.capacity(), 128);
+}
+
+test "reserve satisfies max load factor" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    try map.reserve(127);
+    expectEqual(map.capacity(), 256);
 }
 
 test "remove" {
