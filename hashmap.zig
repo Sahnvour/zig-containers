@@ -294,14 +294,15 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             }
         }
 
-        // TODO ensureCapacity based on *wanted* size so we can allocate just the needed KV and no more
         fn ensureCapacity(self: *Self) !void {
             if (self.capacity() == 0) {
                 try self.setCapacity(16);
             }
 
             if (self.size * 5 >= self.buckets.len * 3) {
-                try self.grow();
+                assert(self.buckets.len < std.math.maxInt(Size) / 2);
+                const new_capacity = @intCast(Size, self.buckets.len * 2);
+                try self.grow(new_capacity);
             }
         }
 
@@ -318,10 +319,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             }
         }
 
-        fn grow(self: *Self) !void {
-            assert(self.buckets.len < std.math.maxInt(Size) / 2);
-            const new_capacity = self.buckets.len * 2;
-
+        fn grow(self: *Self, new_capacity: Size) !void {
             const new_entries = try self.allocator.alloc(KV, new_capacity); // TODO only alloc 60% of capacity
             // If by any chance a realloc was successful in extending the already used memory, no need to copy and free.
             if (new_entries.ptr != self.entries.ptr) {
