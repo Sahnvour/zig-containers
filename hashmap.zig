@@ -100,6 +100,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 
         pub fn reserve(self: *Self, size: Size) !void {
             if (size <= self.capacity()) {
+                assert(isUnderMaxLoadFactor(self.size, self.capacity()));
                 return;
             }
 
@@ -112,10 +113,10 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
                 break :blk cap;
             };
 
-            if (self.size > 0) {
-                try self.grow(new_capacity);
-            } else {
+            if (self.size == 0) {
                 try self.setCapacity(new_capacity);
+            } else {
+                try self.grow(new_capacity);
             }
         }
 
