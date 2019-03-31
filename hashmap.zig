@@ -566,7 +566,10 @@ test "remove" {
         }
     }
     expectEqual(map.size, 10);
-    for (map.toSliceConst()) |kv| {}
+    for (map.toSliceConst()) |kv, j| {
+        expectEqual(kv.key, kv.value);
+        expect(kv.key % 3 != 0);
+    }
 
     i = 0;
     while (i < 16) : (i += 1) {
