@@ -59,7 +59,7 @@ pub fn roundToNextPowerOfTwo(n: var) u32 {
     }
 }
 
-pub fn HashMap(comptime K: type, comptime V: type) type {
+pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlFn: fn (a: K, b: K) bool) type {
     return struct {
         const Self = @This();
 
@@ -174,7 +174,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             assert(self.buckets.len >= 0);
             assert(isPowerOfTwo(self.buckets.len));
 
-            const hash = hashu32(key); // TODO hash |= 0x1, and bucket.hash==0 indicating empty bucket ?
+            const hash = hashFn(key); // TODO hash |= 0x1, and bucket.hash==0 indicating empty bucket ?
             self.internalPut(key, value, hash);
         }
 
@@ -185,7 +185,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 
             // Same code as internalGet except we update the value if found.
             const mask: Size = @intCast(Size, self.buckets.len) - 1;
-            const hash = hashu32(key);
+            const hash = hashFn(key);
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
             while (bucket.index != Bucket.Empty) : ({
@@ -195,7 +195,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
                 if (bucket.hash == hash) {
                     const entry_index = bucket.index;
                     const entry = &self.entries[entry_index];
-                    if (entry.key == key) {
+                    if (eqlFn(entry.key, key)) {
                         entry.value = value;
                         return true;
                     }
@@ -225,7 +225,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
                 if (bucket.hash == hash) {
                     const entry_index = bucket.index;
                     const entry = &self.entries[entry_index];
-                    if (entry.key == key) {
+                    if (eqlFn(entry.key, key)) {
                         return &entry.value;
                     }
                 }
@@ -249,7 +249,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
                 return null; // TODO better without branch ?
             }
 
-            const hash = hashu32(key);
+            const hash = hashFn(key);
             return self.internalGet(key, hash);
         }
 
@@ -263,7 +263,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             assert(self.size > 0);
 
             const mask = @intCast(Size, self.buckets.len - 1);
-            const hash = hashu32(key);
+            const hash = hashFn(key);
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
 
@@ -274,7 +274,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
             }) {
                 if (bucket.hash == hash) {
                     entry = &self.entries[bucket.index];
-                    if (entry.key == key) {
+                    if (eqlFn(entry.key, key)) {
                         break bucket.index;
                     }
                 }
@@ -291,7 +291,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
 
                 // And update its bucket accordingly.
                 const moved_index = self.size;
-                const moved_hash = hashu32(entry.key);
+                const moved_hash = hashFn(entry.key);
                 bucket_index = moved_hash & mask;
                 bucket = &self.buckets[bucket_index];
                 while (bucket.index != moved_index) {
@@ -355,7 +355,7 @@ pub fn HashMap(comptime K: type, comptime V: type) type {
         fn rehash(self: *Self) void {
             for (self.entries[0..self.size]) |entry, i| {
                 const mask = self.buckets.len - 1;
-                const hash = hashu32(entry.key);
+                const hash = hashFn(entry.key);
                 var bucket_index = hash & mask;
                 var bucket = &self.buckets[bucket_index];
 
@@ -386,7 +386,7 @@ test "basic usage" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     const count = 5;
@@ -416,7 +416,7 @@ test "reserve" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     try map.reserve(9);
@@ -430,7 +430,7 @@ test "clear" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     try map.put(1, 1);
@@ -450,7 +450,7 @@ test "put and get with precomputed hash" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -473,7 +473,7 @@ test "put and get with long collision chain" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
     try map.reserve(32);
 
@@ -493,7 +493,7 @@ test "grow" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     const growTo = 12456;
@@ -524,7 +524,7 @@ test "reserve with existing elements" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     try map.put(0, 0);
@@ -540,7 +540,7 @@ test "reserve satisfies max load factor" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     try map.reserve(127);
@@ -551,7 +551,7 @@ test "remove" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -585,7 +585,7 @@ test "reverse removes" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -610,7 +610,7 @@ test "multiple removes on same buckets" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -650,7 +650,7 @@ test "putOrUpdate" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
     defer map.deinit();
 
     var i: u32 = 0;
