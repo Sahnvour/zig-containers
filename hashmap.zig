@@ -158,7 +158,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 
         /// Insert an entry in the map with precomputed hash. Assumes it is not already present.
         pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
-            // TODO assert not contains
+            assert(!self.contains(key));
             try self.ensureCapacity();
 
             assert(self.buckets.len >= 0);
@@ -169,7 +169,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 
         /// Insert an entry in the map. Assumes it is not already present.
         pub fn put(self: *Self, key: K, value: V) !void {
-            // TODO assert not contains
+            assert(!self.contains(key));
             try self.ensureCapacity();
 
             assert(self.buckets.len >= 0);
@@ -262,6 +262,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         /// Remove the value associated with key. Assumes it is present.
         pub fn remove(self: *Self, key: K) void {
             assert(self.size > 0);
+            assert(self.contains(key));
 
             const mask = @intCast(Size, self.buckets.len - 1);
             const hash = hashFn(key);
