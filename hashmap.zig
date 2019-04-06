@@ -81,6 +81,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             index: Size,
 
             const Empty = 0xFFFFFFFF;
+            const TombStone = Empty - 1;
         };
 
         pub fn init(allocator: *Allocator) Self {
@@ -142,7 +143,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
 
-            while (bucket.index != Bucket.Empty) {
+            while (bucket.index != Bucket.Empty and bucket.index != Bucket.TombStone) {
                 bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
             }
@@ -280,14 +281,14 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                 }
             } else unreachable;
 
-            // TODO tombstone ?
-            bucket.index = Bucket.Empty - 1;
+            bucket.index = Bucket.TombStone;
             bucket.hash = undefined;
 
             self.size -= 1;
             if (entry_index != self.size) {
                 // Simply move the last element
                 entry.* = self.entries[self.size];
+                self.entries[self.size] = undefined;
 
                 // And update its bucket accordingly.
                 const moved_index = self.size;
@@ -643,6 +644,38 @@ test "multiple removes on same buckets" {
     i = 0;
     while (i < 16) : (i += 1) {
         expectEqual(map.get(i).?.*, i);
+    }
+}
+
+test "put and remove loop in random order" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var keys = std.ArrayList(u32).init(&direct_allocator.allocator);
+    const size = 32;
+    const iterations = 100;
+
+    var i: u32 = 0;
+    while (i < size) : (i += 1) {
+        try keys.append(i);
+    }
+    var rng = std.rand.DefaultPrng.init(0);
+
+    while (i < iterations) : (i += 1) {
+        std.rand.Random.shuffle(&rng.random, u32, keys.toSlice());
+
+        for (keys.toSlice()) |key| {
+            try map.put(key, key);
+        }
+        expectEqual(map.size, size);
+
+        for (keys.toSlice()) |key| {
+            map.remove(key);
+        }
+        expectEqual(map.size, 0);
     }
 }
 
