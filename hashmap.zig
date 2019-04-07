@@ -58,6 +58,70 @@ pub fn roundToNextPowerOfTwo(n: var) u32 {
         return roundToNextPowerOfTwo(@intCast(u32, n)); // TODO
     }
 }
+/// A HashMap based on open addressing and linear probing.
+// Design decisions:
+//
+// Open addressing is good to modern CPU architectures, making efficient use of
+// caches. Once you've resolved the key's hash to the initial bucket, it is most
+// likely that the element you're looking for is within a cache line. If the
+// elements are too big to fit many in a cache line, you still benefit from
+// regular patterns in memory accesses, which are easy to predict for the CPU.
+// Linear probing is a way of resolving collisions when multiple elements belong
+// in the same bucket. It's nice on the memory cache and easily predictable.
+//
+// The HashMap holds two data arrays, one containing metadata, and one containing
+// elements.
+// * Metadata
+// An array of buckets, each holding the hash of the element within it and an index.
+// At the moment, this is a pair of u32, restraining the size of the HashMap to
+// about 2^32.
+// * Elements
+// An array of elements, stored contiguously.
+//
+// The capacity is based on power of two numbers, which allow to use a bitmask
+// operation instead of modulo when probing.
+//
+// This strategy has several advantages, especially regarding memory usage and speed.
+//
+// 1. Probing makes a very efficient use of cache: when doing a lookup, it is
+// very likely that even if the bucket is already used by another element, we
+// can look into the following ones in the same cache line. Interleaving the
+// metadata with actual elements would incur more frequent cache misses.
+//
+// 2. By storing the hash of the element present into the bucket, we can have
+// high confidence that probing usually does not need to look at many elements.
+// If that's probable that two elements resolve to the same bucket, especially
+// in HashMaps of small capacity, it is not that their _hashes_ collision. Thus
+// we can simply probe in the bucket array by comparing hashes without resorting
+// to comparing keys. When a bucket with the same hash is found, we do a key
+// comparison to be certain of the key's identity, and that's usually the only one.
+//
+// 3. Elements are inserted on the back of their array, and their bucket
+// updated. Removal is also inspired from dynamic arrays: the removed element X
+// is replaced by Y, the one at the end of the array (if applicable). X's bucket
+// is marked with a tombstone, and Y's bucket is updated to its new index in
+// the element array. This is amortized rehash for removal.
+//
+// 4. Elements are stored contiguously, which mean they can be used as a slice.
+// This results in cache-efficient iteration over the elements.
+//
+// 5. Separating bucket metadata from stored elements allows to allocate less
+// element slots than capacity, because we know that we will never have more
+// elements than the maximum load factor multiplied by capacity. When elements
+// contain big keys and/or values, this can be a substantial saving in memory.
+// The amount of "wasted" memory is then only two u32 for each empty bucket,
+// and can be calculated so: (1 - max_load_factor) * capacity * 8 bytes.
+//
+// 6. Using no SIMD operations or special instruction set means that it is
+// widely portable across platforms. The implementation is also quite simple.
+//
+// But it also has drawbacks or areas it could be improved upon.
+//
+// 1. Storing 8 bytes of metadata per element is a lot and adds significant
+// memory overhead compared to implementations focusing on small memory footprint.
+//
+// 2. A smarter approach such as Robin Hood Hashing would probably help attain
+// higher load factors with good performance.
 
 pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlFn: fn (a: K, b: K) bool) type {
     return struct {
@@ -106,6 +170,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             }
 
             // Get a new capacity that satisfies the constraint of the maximum load factor.
+            // TODO because of Empty & Tombstone, capacity can be 2^31 at most, handle this correctly
             const new_capacity = blk: {
                 var cap = roundToNextPowerOfTwo(size);
                 if (!isUnderMaxLoadFactor(size, cap)) {
@@ -180,14 +245,14 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             assert(self.buckets.len >= 0);
             assert(isPowerOfTwo(self.buckets.len));
 
-            const hash = hashFn(key); // TODO hash |= 0x1, and bucket.hash==0 indicating empty bucket ?
+            const hash = hashFn(key);
             self.internalPut(key, value, hash);
         }
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
         /// Returns true if the key was already present.
         pub fn putOrUpdate(self: *Self, key: K, value: V) !bool {
-            try self.ensureCapacity(); // TODO move after the get part
+            try self.ensureCapacity(); // Should this go after the 'get' part, at the cost of complicating the code ? Would it even be an actual optimization ?
 
             // Same code as internalGet except we update the value if found.
             const mask: Size = @intCast(Size, self.buckets.len) - 1;
@@ -220,7 +285,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         }
 
         fn internalGet(self: *const Self, key: K, hash: Size) ?*V {
-            const mask: Size = @intCast(Size, self.buckets.len) - 1;
+            const mask = @intCast(Size, self.buckets.len) - 1;
 
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
