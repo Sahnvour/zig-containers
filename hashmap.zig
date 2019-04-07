@@ -134,6 +134,10 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             return self.entries[0..self.size];
         }
 
+        pub fn count(self: *const Self) Size {
+            return self.size;
+        }
+
         pub fn capacity(self: *const Self) Size {
             return @intCast(Size, self.buckets.len);
         }
@@ -311,12 +315,19 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             return size * 5 < cap * 3;
         }
 
+        /// Return the maximum number of entries for a given capacity.
+        fn entryCountForCapacity(cap: Size) Size {
+            const res = (cap * 3) / 5;
+            assert(isUnderMaxLoadFactor(res, cap));
+            return res;
+        }
+
         fn ensureCapacity(self: *Self) !void {
             if (self.capacity() == 0) {
                 try self.setCapacity(16);
             }
 
-            if (!isUnderMaxLoadFactor(self.size, self.capacity())) {
+            if (!isUnderMaxLoadFactor(self.size + 1, self.capacity())) {
                 assert(self.buckets.len < std.math.maxInt(Size) / 2);
                 const new_capacity = @intCast(Size, self.buckets.len * 2);
                 try self.grow(new_capacity);
@@ -324,8 +335,9 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         }
 
         fn setCapacity(self: *Self, cap: Size) !void {
-            self.entries = try self.allocator.alloc(KV, cap);
-            self.buckets = try self.allocator.alloc(Bucket, cap); // TODO only alloc 60% of capacity
+            const entry_count = entryCountForCapacity(cap);
+            self.entries = try self.allocator.alloc(KV, entry_count);
+            self.buckets = try self.allocator.alloc(Bucket, cap);
             self.initBuckets();
             self.size = 0;
         }
@@ -341,7 +353,8 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             // We don't care about the old bucket data, so we can free it first to reduce memory pressure.
             self.allocator.free(self.buckets);
 
-            const new_entries = try self.allocator.alloc(KV, new_capacity); // TODO only alloc 60% of capacity
+            const entry_count = entryCountForCapacity(new_capacity);
+            const new_entries = try self.allocator.alloc(KV, entry_count);
             // If by any chance a realloc was successful in extending the already used memory, no need to copy and free.
             // TODO check that this is possible with the allocator interface
             if (new_entries.ptr != self.entries.ptr) {
