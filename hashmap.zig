@@ -158,6 +158,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 
         /// Insert an entry in the map with precomputed hash. Assumes it is not already present.
         pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
+            assert(hash == hashFn(key));
             assert(!self.contains(key));
             try self.ensureCapacity();
 
@@ -237,6 +238,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 
         /// Get an optional pointer to the value associated with key and precomputed hash, if present.
         pub fn getHashed(self: *const Self, key: K, hash: Size) ?*V {
+            assert(hash == hashFn(key));
             if (self.size == 0) {
                 return null; // TODO better without branch ?
             }
@@ -471,25 +473,27 @@ test "put and get with precomputed hash" {
     }
 }
 
-test "put and get with long collision chain" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
+// This test can only be run by removing the asserts checking hash consistency
+// in putHashed and getHashed.
+// test "put and get with long collision chain" {
+//     var direct_allocator = std.heap.DirectAllocator.init();
+//     defer direct_allocator.deinit();
 
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
-    defer map.deinit();
-    try map.reserve(32);
+//     var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+//     defer map.deinit();
+//     try map.reserve(32);
 
-    // Using a fixed arbitrary hash for every value, we force collisions.
-    var i: u32 = 0;
-    while (i < 16) : (i += 1) {
-        try map.putHashed(i, i, 0x12345678);
-    }
+//     // Using a fixed arbitrary hash for every value, we force collisions.
+//     var i: u32 = 0;
+//     while (i < 16) : (i += 1) {
+//         try map.putHashed(i, i, 0x12345678);
+//     }
 
-    i = 0;
-    while (i < 16) : (i += 1) {
-        expectEqual(map.getHashed(i, 0x12345678).?.*, i);
-    }
-}
+//     i = 0;
+//     while (i < 16) : (i += 1) {
+//         expectEqual(map.getHashed(i, 0x12345678).?.*, i);
+//     }
+// }
 
 test "grow" {
     var direct_allocator = std.heap.DirectAllocator.init();
