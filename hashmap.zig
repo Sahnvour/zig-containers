@@ -293,7 +293,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                 bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
             }) {
-                if (bucket.hash == hash) {
+                if (bucket.index != Bucket.TombStone and bucket.hash == hash) {
                     const entry_index = bucket.index;
                     const entry = &self.entries[entry_index];
                     if (eqlFn(entry.key, key)) {
@@ -345,7 +345,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                 bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
             }) {
-                if (bucket.hash == hash) {
+                if (bucket.index != Bucket.TombStone and bucket.hash == hash) {
                     entry = &self.entries[bucket.index];
                     if (eqlFn(entry.key, key)) {
                         break bucket.index;
@@ -354,7 +354,6 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             } else unreachable;
 
             bucket.index = Bucket.TombStone;
-            bucket.hash = undefined;
 
             self.size -= 1;
             if (entry_index != self.size) {
@@ -759,6 +758,35 @@ test "put and remove loop in random order" {
             map.remove(key);
         }
         expectEqual(map.size, 0);
+    }
+}
+
+test "remove one million elements in random order" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    const Map = HashMap(u32, u32, hashu32, eqlu32);
+    const n = 1000 * 1000;
+    var map = Map.init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var keys = std.ArrayList(u32).init(&direct_allocator.allocator);
+    var i: u32 = 0;
+    while (i < n) : (i += 1) {
+        keys.append(i) catch unreachable;
+    }
+
+    var rng = std.rand.DefaultPrng.init(0);
+    std.rand.Random.shuffle(&rng.random, u32, keys.toSlice());
+
+    for (keys.toSlice()) |key| {
+        map.put(key, key) catch unreachable;
+    }
+
+    i = 0;
+    while (i < n) : (i += 1) {
+        const key = keys.toSlice()[i];
+        map.remove(key);
     }
 }
 
