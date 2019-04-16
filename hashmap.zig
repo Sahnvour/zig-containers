@@ -163,8 +163,8 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             self.* = undefined;
         }
 
-        pub fn reserve(self: *Self, size: Size) !void {
-            if (size <= self.capacity()) {
+        pub fn reserve(self: *Self, cap: Size) !void {
+            if (cap <= self.capacity()) {
                 assert(isUnderMaxLoadFactor(self.size, self.capacity()));
                 return;
             }
@@ -172,14 +172,14 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             // Get a new capacity that satisfies the constraint of the maximum load factor.
             // TODO because of Empty & Tombstone, capacity can be 2^31 at most, handle this correctly
             const new_capacity = blk: {
-                var cap = roundToNextPowerOfTwo(size);
-                if (!isUnderMaxLoadFactor(size, cap)) {
-                    cap *= 2;
+                var new_cap = roundToNextPowerOfTwo(cap);
+                if (!isUnderMaxLoadFactor(cap, new_cap)) {
+                    new_cap *= 2;
                 }
-                break :blk cap;
+                break :blk new_cap;
             };
 
-            if (self.size == 0) {
+            if (self.capacity() == 0) {
                 try self.setCapacity(new_capacity);
             } else {
                 try self.grow(new_capacity);
@@ -399,6 +399,8 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         }
 
         fn setCapacity(self: *Self, cap: Size) !void {
+            assert(self.capacity() == 0);
+            assert(self.size == 0);
             const entry_count = entryCountForCapacity(cap);
             self.entries = try self.allocator.alloc(KV, entry_count);
             self.buckets = try self.allocator.alloc(Bucket, cap);
