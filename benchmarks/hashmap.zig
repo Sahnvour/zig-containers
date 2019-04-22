@@ -147,16 +147,16 @@ fn eraseRandomOrder(comptime Map: type) MapBenchFn {
             var rng = std.rand.DefaultPrng.init(0);
             std.rand.Random.shuffle(&rng.random, u32, keys.toSlice());
 
-            while (ctx.run()) {
+            while (ctx.runExplicitTiming()) {
                 var i: u32 = 0;
                 while (i < n) : (i += 1) {
                     putHelper(&map, i, i);
                 }
 
-                i = 0;
-                while (i < n) : (i += 1) {
-                    const key = keys.toSlice()[i];
-                    removeHelper(&map, i);
+                ctx.startTimer();
+                defer ctx.stopTimer();
+                for (keys.toSliceConst()) |key| {
+                    removeHelper(&map, key);
                 }
             }
         }
