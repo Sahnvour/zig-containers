@@ -222,7 +222,7 @@ fn stdHashVsMurmur() void {
 
 fn wyhash(x: u32) u32 {
     const slice = std.mem.asBytes(&x);
-    return @truncate(u32, @import("wyhash").rng(x));
+    return @truncate(u32, @import("wyhash").hash(slice));
 }
 
 fn wyhashVsMurmur() void {
