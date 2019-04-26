@@ -46,7 +46,7 @@ fn reserveHelper(map: var, size: u32) void {
     } else {
         var i: u32 = 0;
         while (i < size) : (i += 1) {
-            putHelper(&map, i, 0);
+            putHelper(map, i, 0);
         }
         map.clear();
     }
