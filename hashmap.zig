@@ -416,8 +416,6 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 
         fn grow(self: *Self, new_capacity: Size) !void {
             assert(isPowerOfTwo(new_capacity));
-            // We don't care about the old bucket data, so we can free it first to reduce memory pressure.
-            self.allocator.free(self.buckets);
 
             const entry_count = entryCountForCapacity(new_capacity);
             const new_entries = try self.allocator.alloc(KV, entry_count);
@@ -430,24 +428,29 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             self.entries = new_entries;
 
             const new_buckets = try self.allocator.alloc(Bucket, new_capacity);
+
+            self.rehash(new_buckets);
+            self.allocator.free(self.buckets);
             self.buckets = new_buckets;
-            self.initBuckets();
-            self.rehash();
         }
 
-        fn rehash(self: *Self) void {
-            for (self.entries[0..self.size]) |entry, i| {
-                const mask = self.buckets.len - 1;
-                const hash = hashFn(entry.key);
-                var bucket_index = hash & mask;
-                var bucket = &self.buckets[bucket_index];
+        fn rehash(self: *Self, new_buckets: []Bucket) void {
+            std.mem.set(Bucket, new_buckets, Bucket{ .index = Bucket.Empty, .hash = Bucket.Empty });
 
-                while (bucket.index != Bucket.Empty) : (bucket_index = (bucket_index + 1) & mask) {
-                    bucket = &self.buckets[bucket_index];
+            // We'll move the existing buckets into their new home.
+            // This is faster than a real rehashing that would go through the
+            // entries and hash them to create the new buckets.
+            const mask = new_buckets.len - 1;
+            for (self.buckets) |bucket| {
+                if (bucket.index != Bucket.Empty) {
+                    var bucket_index = bucket.hash & mask;
+                    var new_bucket = &new_buckets[bucket_index];
+                    while (new_bucket.index != Bucket.Empty) {
+                        bucket_index = (bucket_index + 1) & mask;
+                        new_bucket = &new_buckets[bucket_index];
+                    }
+                    new_bucket.* = bucket;
                 }
-
-                bucket.hash = hash;
-                bucket.index = @intCast(Size, i);
             }
         }
     };
