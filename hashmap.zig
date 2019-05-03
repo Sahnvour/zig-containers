@@ -391,7 +391,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                 try self.setCapacity(16);
             }
 
-            if (!isUnderMaxLoadFactor(self.size + 1, self.capacity())) {
+            if (self.size == self.entries.len) { // We know the entries are exactly the maximum size according to the load factor.
                 assert(self.buckets.len < std.math.maxInt(Size) / 2);
                 const new_capacity = @intCast(Size, self.buckets.len * 2);
                 try self.grow(new_capacity);
