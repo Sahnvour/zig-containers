@@ -413,17 +413,12 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         }
 
         fn grow(self: *Self, new_capacity: Size) !void {
+            assert(new_capacity > self.capacity());
             assert(isPowerOfTwo(new_capacity));
 
             const entry_count = entryCountForCapacity(new_capacity);
-            const new_entries = try self.allocator.alloc(KV, entry_count);
-            // If by any chance a realloc was successful in extending the already used memory, no need to copy and free.
-            // TODO check that this is possible with the allocator interface
-            if (new_entries.ptr != self.entries.ptr) {
-                mem.copy(KV, new_entries[0..self.size], self.entries[0..self.size]);
-                self.allocator.free(self.entries);
-            }
-            self.entries = new_entries;
+            assert(entry_count > self.entries.len);
+            self.entries = if (self.entries.len != 0) try self.allocator.realloc(self.entries, entry_count) else try self.allocator.alloc(KV, entry_count);
 
             const new_buckets = try self.allocator.alloc(Bucket, new_capacity);
 
