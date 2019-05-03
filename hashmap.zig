@@ -409,9 +409,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         }
 
         fn initBuckets(self: *Self) void {
-            for (self.buckets) |*bucket| {
-                bucket.index = Bucket.Empty; // TODO replace this with something actually bulletproof and perf
-            }
+            std.mem.set(Bucket, self.buckets, Bucket{ .index = Bucket.Empty, .hash = Bucket.Empty });
         }
 
         fn grow(self: *Self, new_capacity: Size) !void {
