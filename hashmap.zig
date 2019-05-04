@@ -333,7 +333,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         /// Remove the value associated with key. Assumes it is present.
         pub fn remove(self: *Self, key: K) void {
             assert(self.size > 0);
-            assert(self.contains(key));
+            // assert(self.contains(key)); TODO make two versions of remove
 
             const mask = @intCast(Size, self.buckets.len - 1);
             const hash = hashFn(key);
@@ -351,7 +351,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                         break bucket.index;
                     }
                 }
-            } else unreachable;
+            } else return; // TODO make two versions of remove
 
             bucket.index = Bucket.TombStone;
 
