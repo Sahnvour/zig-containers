@@ -325,6 +325,39 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             return self.internalGet(key, hash);
         }
 
+        pub fn getOrPut(self: *Self, key: K, value: V) !*V {
+            try self.ensureCapacity(); // Should this go after the 'get' part, at the cost of complicating the code ? Would it even be an actual optimization ?
+
+            // Same code as internalGet except we update the value if found.
+            const mask: Size = @intCast(Size, self.buckets.len) - 1;
+            const hash = hashFn(key);
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+            while (bucket.index != Bucket.Empty) : ({
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
+            }) {
+                if (bucket.hash == hash) {
+                    const entry_index = bucket.index;
+                    const entry = &self.entries[entry_index];
+                    if (eqlFn(entry.key, key)) {
+                        return &entry.value;
+                    }
+                }
+            }
+
+            // No existing key found, put it there.
+            const index = self.size;
+            self.size += 1;
+
+            bucket.hash = hash;
+            bucket.index = index;
+            self.entries[index] = KV{ .key = key, .value = value };
+
+            return &self.entries[index].value;
+
+        }
+
         /// Return true if there is a value associated with key in the map.
         pub fn contains(self: *const Self, key: K) bool {
             return self.get(key) != null;
@@ -814,4 +847,30 @@ test "putOrUpdate" {
     while (i < 16) : (i += 1) {
         expectEqual(map.get(i).?.*, i * 16 + 1);
     }
+}
+
+test "getOrPut" {
+    var direct_allocator = std.heap.DirectAllocator.init();
+    defer direct_allocator.deinit();
+
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    defer map.deinit();
+
+    var i: u32 = 0;
+    while (i < 10) : (i += 1) {
+        try map.put(i * 2, 2);
+    }
+
+    i = 0;
+    while (i < 20) : (i += 1) {
+        var n = try map.getOrPut(i, 1);
+    }
+
+    i = 0;
+    var sum = i;
+    while (i < 20) : (i += 1) {
+        sum += map.get(i).?.*;
+    }
+
+    expectEqual(sum, 30);
 }
