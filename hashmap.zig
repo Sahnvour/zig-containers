@@ -347,6 +347,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             }
 
             // No existing key found, put it there.
+
             const index = self.size;
             self.size += 1;
 
@@ -355,7 +356,6 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             self.entries[index] = KV{ .key = key, .value = value };
 
             return &self.entries[index].value;
-
         }
 
         /// Return true if there is a value associated with key in the map.
@@ -363,8 +363,9 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             return self.get(key) != null;
         }
 
-        /// Remove the value associated with key. Assumes it is present.
-        pub fn remove(self: *Self, key: K) void {
+        /// Remove the value associated with key, if present. Returns wether
+        /// an element was removed.
+        pub fn remove(self: *Self, key: K) bool {
             assert(self.size > 0);
             // assert(self.contains(key)); TODO make two versions of remove
 
@@ -384,7 +385,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                         break bucket.index;
                     }
                 }
-            } else return; // TODO make two versions of remove
+            } else return false; // TODO make two versions of remove
 
             bucket.index = Bucket.TombStone;
 
@@ -406,6 +407,8 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
                 assert(bucket.hash == moved_hash);
                 bucket.index = entry_index;
             }
+
+            return true;
         }
 
         fn isUnderMaxLoadFactor(size: Size, cap: Size) bool {
@@ -676,7 +679,7 @@ test "remove" {
     i = 0;
     while (i < 16) : (i += 1) {
         if (i % 3 == 0) {
-            map.remove(i);
+            _ = map.remove(i);
         }
     }
     expectEqual(map.size, 10);
@@ -709,7 +712,7 @@ test "reverse removes" {
 
     i = 16;
     while (i > 0) : (i -= 1) {
-        map.remove(i - 1);
+        _ = map.remove(i - 1);
         expect(!map.contains(i - 1));
         var j: u32 = 0;
         while (j < i - 1) : (j += 1) {
@@ -732,10 +735,10 @@ test "multiple removes on same buckets" {
         try map.put(i, i);
     }
 
-    map.remove(7);
-    map.remove(15);
-    map.remove(14);
-    map.remove(13);
+    _ = map.remove(7);
+    _ = map.remove(15);
+    _ = map.remove(14);
+    _ = map.remove(13);
     expect(!map.contains(7));
     expect(!map.contains(15));
     expect(!map.contains(14));
@@ -786,7 +789,7 @@ test "put and remove loop in random order" {
         expectEqual(map.size, size);
 
         for (keys.toSlice()) |key| {
-            map.remove(key);
+            _ = map.remove(key);
         }
         expectEqual(map.size, 0);
     }
@@ -817,7 +820,7 @@ test "remove one million elements in random order" {
     i = 0;
     while (i < n) : (i += 1) {
         const key = keys.toSlice()[i];
-        map.remove(key);
+        _ = map.remove(key);
     }
 }
 
