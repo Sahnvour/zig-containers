@@ -259,7 +259,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             const hash = hashFn(key);
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
-            while (bucket.index != Bucket.Empty) : ({
+            while (bucket.index != Bucket.Empty and bucket.index != Bucket.TombStone) : ({
                 bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
             }) {
@@ -333,7 +333,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             const hash = hashFn(key);
             var bucket_index = hash & mask;
             var bucket = &self.buckets[bucket_index];
-            while (bucket.index != Bucket.Empty) : ({
+            while (bucket.index != Bucket.Empty and bucket.index != Bucket.TombStone) : ({
                 bucket_index = (bucket_index + 1) & mask;
                 bucket = &self.buckets[bucket_index];
             }) {
