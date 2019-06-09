@@ -6,6 +6,7 @@ const math = std.math;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const builtin = @import("builtin");
+const ceilPowerOfTwo = std.math.ceilPowerOfTwo;
 
 pub fn hashInt(comptime HashInt: type, i: var) HashInt {
     var x: HashInt = i;
@@ -39,24 +40,6 @@ pub fn eqlu32(x: u32, y: u32) bool {
 
 pub fn isPowerOfTwo(i: var) bool {
     return i & (i - 1) == 0;
-}
-
-pub fn roundToNextPowerOfTwo(n: var) u32 {
-    const T = @typeOf(n);
-    // TODO generate bit twiddling hacks with inline for based on type size
-    if (T == u32) {
-        var m = n;
-        m -= 1;
-        m |= m >> 1;
-        m |= m >> 2;
-        m |= m >> 4;
-        m |= m >> 8;
-        m |= m >> 16;
-        m += 1;
-        return m;
-    } else {
-        return roundToNextPowerOfTwo(@intCast(u32, n)); // TODO
-    }
 }
 
 // Design decisions:
@@ -173,7 +156,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
             // Get a new capacity that satisfies the constraint of the maximum load factor.
             // TODO because of Empty & Tombstone, capacity can be 2^31 at most, handle this correctly
             const new_capacity = blk: {
-                var new_cap = roundToNextPowerOfTwo(cap);
+                var new_cap = ceilPowerOfTwo(Size, cap) catch unreachable;
                 if (!isUnderMaxLoadFactor(cap, new_cap)) {
                     new_cap *= 2;
                 }
@@ -490,15 +473,6 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
-test "round to next power of two" {
-    expectEqual(roundToNextPowerOfTwo(1), 1);
-    expectEqual(roundToNextPowerOfTwo(2), 2);
-    expectEqual(roundToNextPowerOfTwo(3), 4);
-    expectEqual(roundToNextPowerOfTwo(4), 4);
-    expectEqual(roundToNextPowerOfTwo(13), 16);
-    expectEqual(roundToNextPowerOfTwo(17), 32);
-}
-
 test "basic usage" {
     var direct_allocator = std.heap.DirectAllocator.init();
     defer direct_allocator.deinit();
@@ -622,8 +596,8 @@ test "grow" {
         try map.put(i, i);
     }
     // this depends on the maximum load factor
-    // warn("\ncap {} next {}\n", map.capacity(), roundToNextPowerOfTwo(growTo));
-    // expect(map.capacity() == roundToNextPowerOfTwo(growTo));
+    // warn("\ncap {} next {}\n", map.capacity(), ceilPowerOfTwo(u32, growTo));
+    // expect(map.capacity() == ceilPowerOfTwo(u32, growTo));
     expectEqual(map.size, growTo);
 
     i = 0;
