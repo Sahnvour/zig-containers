@@ -1,7 +1,7 @@
 const std = @import("std");
 const TypeId = @import("builtin").TypeId;
 const assert = std.debug.assert;
-const time = std.os.time;
+const time = std.time;
 const warn = std.debug.warn;
 
 const Timer = time.Timer;
@@ -99,7 +99,6 @@ pub const Context = struct {
             },
             .Finished => unreachable,
         }
-
     }
 
     pub fn averageTime(self: *Context, unit: u64) f32 {
