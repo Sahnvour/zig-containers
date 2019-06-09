@@ -58,7 +58,7 @@ pub fn roundToNextPowerOfTwo(n: var) u32 {
         return roundToNextPowerOfTwo(@intCast(u32, n)); // TODO
     }
 }
-/// A HashMap based on open addressing and linear probing.
+
 // Design decisions:
 //
 // Open addressing is good to modern CPU architectures, making efficient use of
@@ -123,6 +123,7 @@ pub fn roundToNextPowerOfTwo(n: var) u32 {
 // 2. A smarter approach such as Robin Hood Hashing would probably help attain
 // higher load factors with good performance.
 
+/// A HashMap based on open addressing and linear probing.
 pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlFn: fn (a: K, b: K) bool) type {
     return struct {
         const Self = @This();
@@ -445,6 +446,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         }
 
         fn initBuckets(self: *Self) void {
+            // TODO use other default values so that the memset can be faster ?
             std.mem.set(Bucket, self.buckets, Bucket{ .index = Bucket.Empty, .hash = Bucket.Empty });
         }
 
