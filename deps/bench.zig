@@ -126,7 +126,7 @@ pub fn benchmark(name: comptime []const u8, f: BenchFn) void {
             unit_name = "ms";
         },
     }
-    warn("{}: avg {.3}{} ({} iterations)\n", name, ctx.averageTime(unit), unit_name, ctx.iter);
+    warn("{}: avg {}{} ({} iterations)\n", name, ctx.averageTime(unit), unit_name, ctx.iter);
 }
 
 fn benchArgFn(comptime argType: type) type {
@@ -167,7 +167,7 @@ pub fn benchmarkArgs(comptime name: []const u8, comptime f: var, comptime args: 
                 unit_name = "ms";
             },
         }
-        warn("{} <{}>: avg {.3}{} ({} iterations)\n", name, if (@typeOf(a) == type) @typeName(a) else a, ctx.averageTime(unit), unit_name, ctx.iter);
+        warn("{} <{}>: avg {}{} ({} iterations)\n", name, if (@typeOf(a) == type) @typeName(a) else a, ctx.averageTime(unit), unit_name, ctx.iter);
     }
 }
 

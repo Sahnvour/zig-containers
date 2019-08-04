@@ -135,8 +135,8 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
         pub fn init(allocator: *Allocator) Self {
             return Self{
                 .allocator = allocator,
-                .entries = []KV{},
-                .buckets = []Bucket{},
+                .entries = [0]KV{},
+                .buckets = [0]Bucket{},
                 .size = 0,
             };
         }
@@ -472,12 +472,10 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlF
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
+const direct_allocator = std.heap.direct_allocator;
 
 test "basic usage" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     const count = 5;
@@ -504,10 +502,7 @@ test "basic usage" {
 }
 
 test "reserve" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     try map.reserve(9);
@@ -518,10 +513,7 @@ test "reserve" {
 }
 
 test "clear" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     try map.put(1, 1);
@@ -538,10 +530,7 @@ test "clear" {
 }
 
 test "put and get with precomputed hash" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -563,10 +552,7 @@ test "put and get with precomputed hash" {
 // This test can only be run by removing the asserts checking hash consistency
 // in putHashed and getHashed.
 // test "put and get with long collision chain" {
-//     var direct_allocator = std.heap.DirectAllocator.init();
-//     defer direct_allocator.deinit();
-
-//     var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+//     var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
 //     defer map.deinit();
 //     try map.reserve(32);
 
@@ -583,10 +569,7 @@ test "put and get with precomputed hash" {
 // }
 
 test "grow" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     const growTo = 12456;
@@ -614,10 +597,7 @@ test "grow" {
 }
 
 test "reserve with existing elements" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     try map.put(0, 0);
@@ -630,10 +610,7 @@ test "reserve with existing elements" {
 }
 
 test "reserve satisfies max load factor" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     try map.reserve(127);
@@ -641,10 +618,7 @@ test "reserve satisfies max load factor" {
 }
 
 test "remove" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -675,10 +649,7 @@ test "remove" {
 }
 
 test "reverse removes" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -700,10 +671,7 @@ test "reverse removes" {
 }
 
 test "multiple removes on same buckets" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -740,13 +708,10 @@ test "multiple removes on same buckets" {
 }
 
 test "put and remove loop in random order" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
-    var keys = std.ArrayList(u32).init(&direct_allocator.allocator);
+    var keys = std.ArrayList(u32).init(direct_allocator);
     const size = 32;
     const iterations = 100;
 
@@ -772,15 +737,12 @@ test "put and remove loop in random order" {
 }
 
 test "remove one million elements in random order" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
     const Map = HashMap(u32, u32, hashu32, eqlu32);
     const n = 1000 * 1000;
-    var map = Map.init(&direct_allocator.allocator);
+    var map = Map.init(direct_allocator);
     defer map.deinit();
 
-    var keys = std.ArrayList(u32).init(&direct_allocator.allocator);
+    var keys = std.ArrayList(u32).init(direct_allocator);
     var i: u32 = 0;
     while (i < n) : (i += 1) {
         keys.append(i) catch unreachable;
@@ -801,10 +763,7 @@ test "remove one million elements in random order" {
 }
 
 test "putOrUpdate" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -829,10 +788,7 @@ test "putOrUpdate" {
 }
 
 test "getOrPut" {
-    var direct_allocator = std.heap.DirectAllocator.init();
-    defer direct_allocator.deinit();
-
-    var map = HashMap(u32, u32, hashu32, eqlu32).init(&direct_allocator.allocator);
+    var map = HashMap(u32, u32, hashu32, eqlu32).init(direct_allocator);
     defer map.deinit();
 
     var i: u32 = 0;

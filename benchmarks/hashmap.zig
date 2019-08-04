@@ -2,6 +2,7 @@ const std = @import("std");
 const meta = std.meta;
 
 const ArrayList = std.ArrayList;
+const direct_allocator = std.heap.direct_allocator;
 
 const bench = @import("bench");
 const benchmark = bench.benchmark;
@@ -12,9 +13,8 @@ const Context = bench.Context;
 
 const FlatHashMap = @import("hashmap");
 
-var direct_allocator = std.heap.DirectAllocator.init();
-var arena = std.heap.ArenaAllocator.init(&direct_allocator.allocator);
-const allocator = &direct_allocator.allocator;
+var arena = std.heap.ArenaAllocator.init(direct_allocator);
+const allocator = direct_allocator;
 
 fn putHelper(map: var, key: var, value: var) void {
     const put_type = @typeOf(map.put);
@@ -204,7 +204,7 @@ fn iterate(comptime Map: type) MapBenchFn {
     return Closure.bench;
 }
 
-const sizes = []u32{ 5, 10, 25, 50, 100, 500, 1000, 15000, 50000, 100000, 1000 * 1000 };
+const sizes = [_]u32{ 5, 10, 25, 50, 100, 500, 1000, 15000, 50000, 100000, 1000 * 1000 };
 
 const hash = comptime FlatHashMap.hashu32;
 const eql = comptime FlatHashMap.eqlu32;

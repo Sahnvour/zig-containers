@@ -4,14 +4,14 @@
 const std = @import("std");
 const mem = std.mem;
 
-const primes = []u64{
+const primes = [_]u64{
     0xa0761d6478bd642f, 0xe7037ed1a0b428db,
     0x8ebc6af09c88c6e3, 0x589965cc75374cc3,
     0x1d8e4e27c47d124f, 0xeb44accab455d165,
 };
 
 fn read_bytes(comptime bytes: u8, data: []const u8) u64 {
-    return mem.readVarInt(u64, data[0..bytes], @import("builtin").endian);
+    return mem.readVarInt(u64, data[0..bytes], .Little);
 }
 
 fn read_8bytes_swapped(data: []const u8) u64 {
