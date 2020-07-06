@@ -1,5 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const meta = std.meta;
+
+const TypeId = builtin.TypeId;
 
 const ArrayList = std.ArrayList;
 const direct_allocator = std.heap.direct_allocator;
@@ -11,16 +14,22 @@ const clobberMemory = bench.clobberMemory;
 const doNotOptimize = bench.doNotOptimize;
 const Context = bench.Context;
 
-const FlatHashMap = @import("hashmap");
+const HashMap = @import("hashmap").HashMap;
+const SliceableHashMap = @import("sliceable_hashmap").HashMap;
 
 var arena = std.heap.ArenaAllocator.init(direct_allocator);
 const allocator = direct_allocator;
 
+pub fn eqlu32(x: u32, y: u32) bool {
+    return x == y;
+}
+
 fn putHelper(map: var, key: var, value: var) void {
     const put_type = @typeOf(map.put);
     const return_type = @typeInfo(put_type).BoundFn.return_type.?;
+    const payload_type = @typeInfo(return_type).ErrorUnion.payload;
 
-    if (return_type == void) {
+    if (payload_type == void) {
         map.put(key, value) catch unreachable;
     } else {
         _ = map.put(key, value) catch unreachable;
@@ -28,14 +37,7 @@ fn putHelper(map: var, key: var, value: var) void {
 }
 
 fn removeHelper(map: var, key: var) void {
-    const put_type = @typeOf(map.remove);
-    const return_type = @typeInfo(put_type).BoundFn.return_type.?;
-
-    if (return_type == void) {
-        map.remove(key);
-    } else {
-        _ = map.remove(key);
-    }
+    doNotOptimize(map.remove(key));
 }
 
 fn reserveHelper(map: var, size: u32) void {
@@ -204,64 +206,35 @@ fn iterate(comptime Map: type) MapBenchFn {
     return Closure.bench;
 }
 
-const sizes = [_]u32{ 5, 10, 25, 50, 100, 500, 1000, 15000, 50000, 100000, 1000 * 1000 };
+const sizes = [_]u32{ 5, 25, 100, 500, 1000, 15000, 50000 };
 
-const hash = comptime FlatHashMap.hashu32;
-const eql = comptime FlatHashMap.eqlu32;
+const Flat = HashMap(u32, u32, wyhash64, eqlu32);
+const Sliceable = SliceableHashMap(u32, u32, wyhash, eqlu32);
+const Std = std.AutoHashMap(u32, u32);
 
-const Flat = FlatHashMap.HashMap(u32, u32, hash, eql);
-const FlatWy = FlatHashMap.HashMap(u32, u32, wyhash, eql);
-const Std = std.HashMap(u32, u32, hash, eql);
-
-fn stdHashVsMurmur() void {
-    const AutoStd = comptime insertSequential(std.AutoHashMap(u32, u32));
-    const StdMurmur = comptime insertSequential(std.HashMap(u32, u32, hash, eql));
-    benchmarkArgs("std hash", AutoStd, sizes);
-    benchmarkArgs("murmur3 ", StdMurmur, sizes);
-}
-
-fn wyhash(x: u32) u32 {
-    const slice = std.mem.asBytes(&x);
-    return @truncate(u32, @import("wyhash").hash(slice));
-}
-
-fn wyhashVsMurmur() void {
-    const WyMap = comptime insertSequential(FlatHashMap.HashMap(u32, u32, wyhash, eql));
-    const MurmurMap = comptime insertSequential(FlatHashMap.HashMap(u32, u32, hash, eql));
-    benchmarkArgs("wyhash", WyMap, sizes);
-    benchmarkArgs("murmur", MurmurMap, sizes);
-}
+const wyhash = std.hash_map.getAutoHashFn(u32);
+const wyhash64 = struct {
+    fn hash(key: u32) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&hasher, key);
+        return hasher.final();
+    }
+}.hash;
 
 const BenchFn = @typeOf(insertSequential);
 fn compareFlatAndStd(comptime name: []const u8, comptime benchFn: BenchFn) void {
     benchmarkArgs(name ++ " Flat", comptime benchFn(Flat), sizes);
+    benchmarkArgs(name ++ " Slic", comptime benchFn(Sliceable), sizes);
     benchmarkArgs(name ++ " Std ", comptime benchFn(Std), sizes);
 }
 
-fn compareMurmurAndWy(comptime name: []const u8, comptime benchFn: BenchFn) void {
-    benchmarkArgs(name ++ " Wy ", comptime benchFn(FlatWy), sizes);
-    benchmarkArgs(name ++ " Mm3", comptime benchFn(Flat), sizes);
-}
-
-fn stdHashMapVsFlatHashMap() void {
-    benchmarkArgs("insert Flat", comptime insertSequential(Flat), sizes);
-    benchmarkArgs("insert Std ", comptime insertSequential(Std), sizes);
-}
-
-const Module = @This();
+// TODO
+// - use better allocators
 
 pub fn main() void {
-    // stdHashVsMurmur();
-    // wyhashVsMurmur();
     compareFlatAndStd("insert", comptime insertSequential);
-    // compareFlatAndStd("contains", comptime successfulContains);
-    // compareFlatAndStd("!contains", comptime unsuccessfulContains);
-    // compareFlatAndStd("eraseRandomOrder", comptime eraseRandomOrder);
-    // compareFlatAndStd("iterate", comptime iterate);
-
-    // compareMurmurAndWy("insert", comptime insertSequential);
-    // compareMurmurAndWy("contains", comptime successfulContains);
-    // compareMurmurAndWy("!contains", comptime unsuccessfulContains);
-    // compareMurmurAndWy("eraseRandomOrder", comptime eraseRandomOrder);
-    // compareMurmurAndWy("iterate", comptime iterate);
+    compareFlatAndStd("contains", comptime successfulContains);
+    compareFlatAndStd("!contains", comptime unsuccessfulContains);
+    compareFlatAndStd("eraseRandomOrder", comptime eraseRandomOrder);
+    compareFlatAndStd("iterate", comptime iterate);
 }

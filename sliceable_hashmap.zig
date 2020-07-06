@@ -30,8 +30,8 @@ pub fn hashInt(comptime HashInt: type, i: var) HashInt {
     return x;
 }
 
-pub fn hashu32(x: u32) u64 {
-    return @inlineCall(hashInt, u64, x);
+pub fn hashu32(x: u32) u32 {
+    return @inlineCall(hashInt, u32, x);
 }
 
 pub fn eqlu32(x: u32, y: u32) bool {
@@ -42,8 +42,72 @@ pub fn isPowerOfTwo(i: var) bool {
     return i & (i - 1) == 0;
 }
 
+// Design decisions:
+//
+// Open addressing is good to modern CPU architectures, making efficient use of
+// caches. Once you've resolved the key's hash to the initial bucket, it is most
+// likely that the element you're looking for is within a cache line. If the
+// elements are too big to fit many in a cache line, you still benefit from
+// regular patterns in memory accesses, which are easy to predict for the CPU.
+// Linear probing is a way of resolving collisions when multiple elements belong
+// in the same bucket. It's nice on the memory cache and easily predictable.
+//
+// The HashMap holds two data arrays, one containing metadata, and one containing
+// elements.
+// * Metadata
+// An array of buckets, each holding the hash of the element within it and an index.
+// At the moment, this is a pair of u32, restraining the size of the HashMap to
+// about 2^32.
+// * Elements
+// An array of elements, stored contiguously.
+//
+// The capacity is based on power of two numbers, which allow to use a bitmask
+// operation instead of modulo when probing.
+//
+// This strategy has several advantages, especially regarding memory usage and speed.
+//
+// 1. Probing makes a very efficient use of cache: when doing a lookup, it is
+// very likely that even if the bucket is already used by another element, we
+// can look into the following ones in the same cache line. Interleaving the
+// metadata with actual elements would incur more frequent cache misses.
+//
+// 2. By storing the hash of the element present into the bucket, we can have
+// high confidence that probing usually does not need to look at many elements.
+// If that's probable that two elements resolve to the same bucket, especially
+// in HashMaps of small capacity, it is not that their _hashes_ collision. Thus
+// we can simply probe in the bucket array by comparing hashes without resorting
+// to comparing keys. When a bucket with the same hash is found, we do a key
+// comparison to be certain of the key's identity, and that's usually the only one.
+//
+// 3. Elements are inserted on the back of their array, and their bucket
+// updated. Removal is also inspired from dynamic arrays: the removed element X
+// is replaced by Y, the one at the end of the array (if applicable). X's bucket
+// is marked with a tombstone, and Y's bucket is updated to its new index in
+// the element array. This is amortized rehash for removal.
+//
+// 4. Elements are stored contiguously, which mean they can be used as a slice.
+// This results in cache-efficient iteration over the elements.
+//
+// 5. Separating bucket metadata from stored elements allows to allocate less
+// element slots than capacity, because we know that we will never have more
+// elements than the maximum load factor multiplied by capacity. When elements
+// contain big keys and/or values, this can be a substantial saving in memory.
+// The amount of "wasted" memory is then only two u32 for each empty bucket,
+// and can be calculated so: (1 - max_load_factor) * capacity * 8 bytes.
+//
+// 6. Using no SIMD operations or special instruction set means that it is
+// widely portable across platforms. The implementation is also quite simple.
+//
+// But it also has drawbacks or areas it could be improved upon.
+//
+// 1. Storing 8 bytes of metadata per element is a lot and adds significant
+// memory overhead compared to implementations focusing on small memory footprint.
+//
+// 2. A smarter approach such as Robin Hood Hashing would probably help attain
+// higher load factors with good performance.
+
 /// A HashMap based on open addressing and linear probing.
-pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlFn: fn (a: K, b: K) bool) type {
+pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u32, eqlFn: fn (a: K, b: K) bool) type {
     return struct {
         const Self = @This();
 
@@ -54,74 +118,18 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
         allocator: *Allocator,
 
         const Size = u32;
-        const Hash = u64;
 
         const KV = struct {
             key: K,
             value: V,
         };
 
-        const Bucket = packed struct {
-            const FingerPrint = u6;
+        const Bucket = struct {
+            hash: Size,
+            index: Size,
 
-            used: u1 = 0,
-            tombstone: u1 = 0,
-            fingerprint: FingerPrint = 0,
-
-            pub fn isUsed(self: Bucket) bool {
-                return self.used == 1;
-            }
-
-            pub fn isTombstone(self: Bucket) bool {
-                return self.tombstone == 1;
-            }
-
-            pub fn takeFingerprint(hash: Hash) FingerPrint {
-                const hash_bits = @typeInfo(Hash).Int.bits;
-                const fp_bits = @typeInfo(FingerPrint).Int.bits;
-                return @truncate(FingerPrint, hash >> (hash_bits - fp_bits));
-            }
-
-            pub fn continueProbing(self: Bucket) bool {
-                return self.isUsed() or self.isTombstone();
-            }
-
-            pub fn fill(self: *Bucket, fp: FingerPrint) void {
-                self.used = 1;
-                self.tombstone = 0;
-                self.fingerprint = fp;
-            }
-
-            pub fn clear(self: *Bucket) void {
-                self.used = 0;
-                self.tombstone = 1;
-                self.fingerprint = 0;
-            }
-        };
-
-        comptime {
-            assert(@sizeOf(Bucket) == 1);
-        }
-
-        const Iterator = struct {
-            hm: *const Self,
-            count: Size = 0,
-            index: Size = 0,
-
-            pub fn next(it: *Iterator) ?*KV {
-                assert(it.count <= it.hm.size);
-                if (it.count == it.hm.size) return null;
-
-                while (true) : (it.index += 1) {
-                    const bucket = &it.hm.buckets[it.index];
-                    if (bucket.isUsed()) {
-                        const entry = &it.hm.entries[it.index];
-                        it.index += 1;
-                        it.count += 1;
-                        return entry;
-                    }
-                }
-            }
+            const Empty = 0xFFFFFFFF;
+            const TombStone = Empty - 1;
         };
 
         pub fn init(allocator: *Allocator) Self {
@@ -139,22 +147,22 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
             self.* = undefined;
         }
 
-        fn capacityForSize(new_size: Size) Size {
-            var new_cap = ceilPowerOfTwo(Size, new_size) catch unreachable;
-            if (!isUnderMaxLoadFactor(new_size, new_cap)) {
-                new_cap *= 2;
-            }
-            return new_cap;
-        }
-
-        pub fn reserve(self: *Self, new_size: Size) !void {
-            if (new_size <= self.capacity()) {
+        pub fn reserve(self: *Self, cap: Size) !void {
+            if (cap <= self.capacity()) {
                 assert(isUnderMaxLoadFactor(self.size, self.capacity()));
                 return;
             }
 
             // Get a new capacity that satisfies the constraint of the maximum load factor.
-            const new_capacity = capacityForSize(new_size);
+            // TODO because of Empty & Tombstone, capacity can be 2^31 at most, handle this correctly
+            const new_capacity = blk: {
+                var new_cap = ceilPowerOfTwo(Size, cap) catch unreachable;
+                if (!isUnderMaxLoadFactor(cap, new_cap)) {
+                    new_cap *= 2;
+                }
+                break :blk new_cap;
+            };
+
             if (self.capacity() == 0) {
                 try self.setCapacity(new_capacity);
             } else {
@@ -167,6 +175,14 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
             self.initBuckets();
         }
 
+        pub fn toSlice(self: *Self) []KV {
+            return self.entries[0..self.size];
+        }
+
+        pub fn toSliceConst(self: *const Self) []const KV {
+            return self.entries[0..self.size];
+        }
+
         pub fn count(self: *const Self) Size {
             return self.size;
         }
@@ -175,29 +191,26 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
             return @intCast(Size, self.buckets.len);
         }
 
-        pub fn iterator(self: *const Self) Iterator {
-            return .{ .hm = self };
-        }
-
-        fn internalPut(self: *Self, key: K, value: V, hash: Hash) void {
+        fn internalPut(self: *Self, key: K, value: V, hash: Size) void {
             const mask = self.buckets.len - 1;
-            var idx = hash & mask;
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
 
-            var bucket = &self.buckets[idx];
-            while (bucket.isUsed()) {
-                idx = (idx + 1) & mask;
-                bucket = &self.buckets[idx];
+            while (bucket.index != Bucket.Empty and bucket.index != Bucket.TombStone) {
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
             }
 
-            const fingerprint = Bucket.takeFingerprint(hash);
-            bucket.fill(fingerprint);
-            self.entries[idx] = KV{ .key = key, .value = value };
-
+            const index = self.size;
             self.size += 1;
+
+            bucket.hash = hash;
+            bucket.index = index;
+            self.entries[index] = KV{ .key = key, .value = value };
         }
 
         /// Insert an entry in the map with precomputed hash. Assumes it is not already present.
-        pub fn putHashed(self: *Self, key: K, value: V, hash: Hash) !void {
+        pub fn putHashed(self: *Self, key: K, value: V, hash: Size) !void {
             assert(hash == hashFn(key));
             assert(!self.contains(key));
             try self.ensureCapacity();
@@ -220,80 +233,64 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
             self.internalPut(key, value, hash);
         }
 
-        /// Insert an entry in the map. Assumes it is not already present,
-        /// and that no allocation is needed.
-        pub fn putNoGrow(self: *Self, key: K, value: V) void {
-            assert(!self.contains(key));
-            assert(self.buckets.len >= 0);
-            assert(isPowerOfTwo(self.buckets.len));
-
-            const hash = hashFn(key);
-            self.internalPut(key, value, hash);
-        }
-
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
         /// Returns true if the key was already present.
         pub fn putOrUpdate(self: *Self, key: K, value: V) !bool {
             try self.ensureCapacity(); // Should this go after the 'get' part, at the cost of complicating the code ? Would it even be an actual optimization ?
 
+            // Same code as internalGet except we update the value if found.
+            const mask: Size = @intCast(Size, self.buckets.len) - 1;
             const hash = hashFn(key);
-            const mask = @truncate(Size, self.buckets.len - 1);
-            const fingerprint = Bucket.takeFingerprint(hash);
-            var idx = @truncate(Size, hash & mask);
-
-            var first_tombstone_idx: ?Size = null;
-            var bucket = &self.buckets[idx];
-            while (bucket.continueProbing()) {
-                if (first_tombstone_idx == null and bucket.isTombstone()) {
-                    first_tombstone_idx = idx;
-                }
-
-                if (bucket.fingerprint == fingerprint) {
-                    const entry = &self.entries[idx];
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+            while (bucket.index != Bucket.Empty and bucket.index != Bucket.TombStone) : ({
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
+            }) {
+                if (bucket.hash == hash) {
+                    const entry_index = bucket.index;
+                    const entry = &self.entries[entry_index];
                     if (eqlFn(entry.key, key)) {
                         entry.value = value;
                         return true;
                     }
                 }
-                idx = (idx + 1) & mask;
-                bucket = &self.buckets[idx];
             }
 
-            // Cheap try to lower probing lengths after deletions.
-            if (first_tombstone_idx) |i| {
-                bucket = &self.buckets[i];
-            }
-
+            // No existing key found, put it there.
+            const index = self.size;
             self.size += 1;
 
-            bucket.fill(fingerprint);
-            self.entries[idx] = KV{ .key = key, .value = value };
+            bucket.hash = hash;
+            bucket.index = index;
+            self.entries[index] = KV{ .key = key, .value = value };
 
             return false;
         }
 
-        fn internalGet(self: *const Self, key: K, hash: Hash) ?*V {
-            const mask = self.buckets.len - 1;
-            const fingerprint = Bucket.takeFingerprint(hash);
-            var idx = hash & mask;
+        fn internalGet(self: *const Self, key: K, hash: Size) ?*V {
+            const mask = @intCast(Size, self.buckets.len) - 1;
 
-            var bucket = &self.buckets[idx];
-            while (bucket.continueProbing()) {
-                if (!bucket.isTombstone() and bucket.fingerprint == fingerprint) {
-                    const entry = &self.entries[idx];
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+            while (bucket.index != Bucket.Empty) : ({
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
+            }) {
+                if (bucket.index != Bucket.TombStone and bucket.hash == hash) {
+                    const entry_index = bucket.index;
+                    const entry = &self.entries[entry_index];
                     if (eqlFn(entry.key, key)) {
                         return &entry.value;
                     }
                 }
-                idx = (idx + 1) & mask;
-                bucket = &self.buckets[idx];
             }
 
             return null;
         }
 
         /// Get an optional pointer to the value associated with key and precomputed hash, if present.
-        pub fn getHashed(self: *const Self, key: K, hash: Hash) ?*V {
+        pub fn getHashed(self: *const Self, key: K, hash: Size) ?*V {
             assert(hash == hashFn(key));
             if (self.size == 0) {
                 return null; // TODO better without branch ?
@@ -315,28 +312,34 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
         pub fn getOrPut(self: *Self, key: K, value: V) !*V {
             try self.ensureCapacity(); // Should this go after the 'get' part, at the cost of complicating the code ? Would it even be an actual optimization ?
 
+            // Same code as internalGet except we update the value if found.
+            const mask: Size = @intCast(Size, self.buckets.len) - 1;
             const hash = hashFn(key);
-            const mask = self.buckets.len - 1;
-            const fingerprint = Bucket.takeFingerprint(hash);
-            var idx = hash & mask;
-
-            var bucket = &self.buckets[idx];
-            while (bucket.continueProbing()) {
-                if (!bucket.isTombstone() and bucket.fingerprint == fingerprint) {
-                    const entry = &self.entries[idx];
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
+            while (bucket.index != Bucket.Empty and bucket.index != Bucket.TombStone) : ({
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
+            }) {
+                if (bucket.hash == hash) {
+                    const entry_index = bucket.index;
+                    const entry = &self.entries[entry_index];
                     if (eqlFn(entry.key, key)) {
                         return &entry.value;
                     }
                 }
-                idx = (idx + 1) & mask;
-                bucket = &self.buckets[idx];
             }
 
-            bucket.fill(fingerprint);
-            const entry = &self.entries[idx];
-            entry.* = .{ .key = key, .value = value };
+            // No existing key found, put it there.
 
-            return &entry.value;
+            const index = self.size;
+            self.size += 1;
+
+            bucket.hash = hash;
+            bucket.index = index;
+            self.entries[index] = KV{ .key = key, .value = value };
+
+            return &self.entries[index].value;
         }
 
         /// Return true if there is a value associated with key in the map.
@@ -350,32 +353,57 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
             assert(self.size > 0);
             // assert(self.contains(key)); TODO make two versions of remove
 
+            const mask = @intCast(Size, self.buckets.len - 1);
             const hash = hashFn(key);
-            const mask = self.buckets.len - 1;
-            const fingerprint = Bucket.takeFingerprint(hash);
-            var idx = hash & mask;
+            var bucket_index = hash & mask;
+            var bucket = &self.buckets[bucket_index];
 
-            var bucket = &self.buckets[idx];
-            while (bucket.continueProbing()) {
-                if (!bucket.isTombstone() and bucket.fingerprint == fingerprint) {
-                    const entry = &self.entries[idx];
+            var entry: *KV = undefined;
+            const entry_index = while (bucket.index != Bucket.Empty) : ({
+                bucket_index = (bucket_index + 1) & mask;
+                bucket = &self.buckets[bucket_index];
+            }) {
+                if (bucket.index != Bucket.TombStone and bucket.hash == hash) {
+                    entry = &self.entries[bucket.index];
                     if (eqlFn(entry.key, key)) {
-                        bucket.clear();
-                        entry.* = undefined;
-                        self.size -= 1;
-                        return true;
+                        break bucket.index;
                     }
                 }
-                idx = (idx + 1) & mask;
-                bucket = &self.buckets[idx];
+            } else return false; // TODO make two versions of remove
+
+            bucket.index = Bucket.TombStone;
+
+            self.size -= 1;
+            if (entry_index != self.size) {
+                // Simply move the last element
+                entry.* = self.entries[self.size];
+                self.entries[self.size] = undefined;
+
+                // And update its bucket accordingly.
+                const moved_index = self.size;
+                const moved_hash = hashFn(entry.key);
+                bucket_index = moved_hash & mask;
+                bucket = &self.buckets[bucket_index];
+                while (bucket.index != moved_index) {
+                    bucket_index = (bucket_index + 1) & mask;
+                    bucket = &self.buckets[bucket_index];
+                }
+                assert(bucket.hash == moved_hash);
+                bucket.index = entry_index;
             }
 
-            return false;
+            return true;
         }
 
-        // Using u64 to avoid overflowing on big tables.
-        fn isUnderMaxLoadFactor(size: u64, cap: u64) bool {
+        fn isUnderMaxLoadFactor(size: Size, cap: Size) bool {
             return size * 5 < cap * 3;
+        }
+
+        /// Return the maximum number of entries for a given capacity.
+        fn entryCountForCapacity(cap: Size) Size {
+            const res = (cap * 3) / 5;
+            assert(isUnderMaxLoadFactor(res, cap));
+            return res;
         }
 
         fn ensureCapacity(self: *Self) !void {
@@ -383,16 +411,18 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
                 try self.setCapacity(16);
             }
 
-            const new_size = self.size + 1;
-            if (!isUnderMaxLoadFactor(new_size, self.capacity())) {
-                try self.grow(capacityForSize(new_size));
+            if (self.size == self.entries.len) { // We know the entries are exactly the maximum size according to the load factor.
+                assert(self.buckets.len < std.math.maxInt(Size) / 2);
+                const new_capacity = @intCast(Size, self.buckets.len * 2);
+                try self.grow(new_capacity);
             }
         }
 
         fn setCapacity(self: *Self, cap: Size) !void {
             assert(self.capacity() == 0);
             assert(self.size == 0);
-            self.entries = try self.allocator.alloc(KV, cap);
+            const entry_count = entryCountForCapacity(cap);
+            self.entries = try self.allocator.alloc(KV, entry_count);
             self.buckets = try self.allocator.alloc(Bucket, cap);
             self.initBuckets();
             self.size = 0;
@@ -400,33 +430,42 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
 
         fn initBuckets(self: *Self) void {
             // TODO use other default values so that the memset can be faster ?
-            std.mem.set(Bucket, self.buckets, Bucket{});
+            std.mem.set(Bucket, self.buckets, Bucket{ .index = Bucket.Empty, .hash = Bucket.Empty });
         }
 
         fn grow(self: *Self, new_capacity: Size) !void {
             assert(new_capacity > self.capacity());
             assert(isPowerOfTwo(new_capacity));
 
+            const entry_count = entryCountForCapacity(new_capacity);
+            assert(entry_count > self.entries.len);
+            self.entries = if (self.entries.len != 0) try self.allocator.realloc(self.entries, entry_count) else try self.allocator.alloc(KV, entry_count);
+
             const new_buckets = try self.allocator.alloc(Bucket, new_capacity);
-            const new_entries = try self.allocator.alloc(KV, new_capacity);
-            std.mem.set(Bucket, new_buckets, Bucket{});
 
-            // Simple rehash implementation
-            const old_entries = self.entries;
-            const old_buckets = self.buckets;
+            self.rehash(new_buckets);
+            self.allocator.free(self.buckets);
             self.buckets = new_buckets;
-            self.entries = new_entries;
-            self.size = 0;
+        }
 
-            for (old_buckets) |bucket, i| {
-                if (bucket.isUsed()) {
-                    const entry = old_entries[i];
-                    self.putNoGrow(entry.key, entry.value);
+        fn rehash(self: *Self, new_buckets: []Bucket) void {
+            std.mem.set(Bucket, new_buckets, Bucket{ .index = Bucket.Empty, .hash = Bucket.Empty });
+
+            // We'll move the existing buckets into their new home.
+            // This is faster than a real rehashing that would go through the
+            // entries and hash them to create the new buckets.
+            const mask = new_buckets.len - 1;
+            for (self.buckets) |bucket| {
+                if (bucket.index != Bucket.Empty) {
+                    var bucket_index = bucket.hash & mask;
+                    var new_bucket = &new_buckets[bucket_index];
+                    while (new_bucket.index != Bucket.Empty) {
+                        bucket_index = (bucket_index + 1) & mask;
+                        new_bucket = &new_buckets[bucket_index];
+                    }
+                    new_bucket.* = bucket;
                 }
             }
-
-            self.allocator.free(old_buckets);
-            self.allocator.free(old_entries);
         }
     };
 }
@@ -448,8 +487,7 @@ test "basic usage" {
     }
 
     var sum: u32 = 0;
-    var it = map.iterator();
-    while (it.next()) |kv| {
+    for (map.toSliceConst()) |kv| {
         sum += kv.key;
     }
     expect(sum == total);
@@ -546,8 +584,7 @@ test "grow" {
     expectEqual(map.size, growTo);
 
     i = 0;
-    var it = map.iterator();
-    while (it.next()) |kv| {
+    for (map.toSliceConst()) |kv| {
         expectEqual(kv.key, kv.value);
         i += 1;
     }
@@ -596,8 +633,7 @@ test "remove" {
         }
     }
     expectEqual(map.size, 10);
-    var it = map.iterator();
-    while (it.next()) |kv| {
+    for (map.toSliceConst()) |kv, j| {
         expectEqual(kv.key, kv.value);
         expect(kv.key % 3 != 0);
     }
@@ -719,7 +755,6 @@ test "remove one million elements in random order" {
         map.put(key, key) catch unreachable;
     }
 
-    std.rand.Random.shuffle(&rng.random, u32, keys.toSlice());
     i = 0;
     while (i < n) : (i += 1) {
         const key = keys.toSlice()[i];

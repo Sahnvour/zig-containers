@@ -110,23 +110,24 @@ pub const Context = struct {
 pub fn benchmark(name: comptime []const u8, f: BenchFn) void {
     var ctx = Context.init();
     @noInlineCall(f, &ctx);
+
     var unit: u64 = undefined;
     var unit_name: []const u8 = undefined;
-    switch (ctx.averageTime(1)) {
-        0...time.microsecond => {
-            unit = 1;
-            unit_name = "ns";
-        },
-        time.microsecond + 1...time.millisecond => {
-            unit = time.microsecond;
-            unit_name = "us";
-        },
-        else => {
-            unit = time.millisecond;
-            unit_name = "ms";
-        },
+    const avg_time = ctx.averageTime(1);
+    assert(avg_time >= 0);
+
+    if (avg_time <= time.microsecond) {
+        unit = 1;
+        unit_name = "ns";
+    } else if (avg_time <= time.millisecond) {
+        unit = time.microsecond;
+        unit_name = "us";
+    } else {
+        unit = time.millisecond;
+        unit_name = "ms";
     }
-    warn("{}: avg {}{} ({} iterations)\n", name, ctx.averageTime(unit), unit_name, ctx.iter);
+
+    warn("{}: avg {d:.3}{} ({} iterations)\n", name, ctx.averageTime(unit), unit_name, ctx.iter);
 }
 
 fn benchArgFn(comptime argType: type) type {
@@ -151,23 +152,23 @@ pub fn benchmarkArgs(comptime name: []const u8, comptime f: var, comptime args: 
     inline for (args) |a| {
         var ctx = Context.init();
         @noInlineCall(f, &ctx, a);
+
         var unit: u64 = undefined;
         var unit_name: []const u8 = undefined;
-        switch (ctx.averageTime(1)) {
-            0...time.microsecond => {
-                unit = 1;
-                unit_name = "ns";
-            },
-            time.microsecond + 1...time.millisecond => {
-                unit = time.microsecond;
-                unit_name = "us";
-            },
-            else => {
-                unit = time.millisecond;
-                unit_name = "ms";
-            },
+        const avg_time = ctx.averageTime(1);
+        assert(avg_time >= 0);
+
+        if (avg_time <= time.microsecond) {
+            unit = 1;
+            unit_name = "ns";
+        } else if (avg_time <= time.millisecond) {
+            unit = time.microsecond;
+            unit_name = "us";
+        } else {
+            unit = time.millisecond;
+            unit_name = "ms";
         }
-        warn("{} <{}>: avg {}{} ({} iterations)\n", name, if (@typeOf(a) == type) @typeName(a) else a, ctx.averageTime(unit), unit_name, ctx.iter);
+        warn("{} <{}>: avg {d:.3}{} ({} iterations)\n", name, if (@typeOf(a) == type) @typeName(a) else a, ctx.averageTime(unit), unit_name, ctx.iter);
     }
 }
 
@@ -229,7 +230,7 @@ test "benchmarkArgs" {
     }.benchSleep;
 
     std.debug.warn("\n");
-    benchmarkArgs("Sleep", benchSleep, []const u32{ 20, 30, 57 });
+    benchmarkArgs("Sleep", benchSleep, [_]u32{ 20, 30, 57 });
 }
 
 test "benchmarkArgs types" {
@@ -242,7 +243,7 @@ test "benchmarkArgs types" {
     }.benchMin;
 
     std.debug.warn("\n");
-    benchmarkArgs("Min", benchMin, []type{ u32, u64 });
+    benchmarkArgs("Min", benchMin, [_]type{ u32, u64 });
 }
 
 test "benchmark custom timing" {

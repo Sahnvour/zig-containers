@@ -8,11 +8,22 @@ pub fn build(b: *Builder) void {
 
     const bench_exe = b.addExecutable("bench", "benchmarks/hashmap.zig");
     bench_exe.addPackagePath("bench", "deps/bench.zig");
-    bench_exe.addPackagePath("wyhash", "deps/wyhash.zig");
+    bench_exe.addPackagePath("sliceable_hashmap", "sliceable_hashmap.zig");
     bench_exe.addPackagePath("hashmap", "hashmap.zig");
     bench_exe.setBuildMode(builtin.Mode.ReleaseFast);
 
     const bench_cmd = bench_exe.run();
     const bench_step = b.step("bench", "Run benchmarks");
     bench_step.dependOn(&bench_cmd.step);
+
+    const martinus_exe = b.addExecutable("bench", "benchmarks/martinus_map.zig");
+    martinus_exe.addPackagePath("bench", "deps/bench.zig");
+    martinus_exe.addPackagePath("sliceable_hashmap", "sliceable_hashmap.zig");
+    martinus_exe.addPackagePath("hashmap", "hashmap.zig");
+    martinus_exe.linkSystemLibrary("c");
+    martinus_exe.setBuildMode(b.standardReleaseOptions());
+
+    const martinus_cmd = martinus_exe.run();
+    const martinus_step = b.step("martinus", "Run martinus map benchmarks");
+    martinus_step.dependOn(&martinus_cmd.step);
 }
