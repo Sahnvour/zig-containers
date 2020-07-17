@@ -3,9 +3,75 @@ const assert = std.debug.assert;
 const time = std.time;
 const warn = std.debug.warn;
 const Timer = time.Timer;
-const Sfc64 = std.rand.Sfc64;
 const Wyhash = std.heap.Wyhash;
 
+pub const Sfc64 = struct {
+    random: std.rand.Random,
+
+    a: u64 = undefined,
+    b: u64 = undefined,
+    c: u64 = undefined,
+    counter: u64 = undefined,
+
+    const Rotation = 24;
+    const RightShift = 11;
+    const LeftShift = 3;
+
+    pub fn init(init_s: u64) Sfc64 {
+        var x = Sfc64{
+            .random = std.rand.Random{ .fillFn = fill },
+        };
+
+        x.seed(init_s);
+        return x;
+    }
+
+    pub fn next(self: *Sfc64) u64 {
+        const tmp = self.a +% self.b +% self.counter;
+        self.counter += 1;
+        self.a = self.b ^ (self.b >> RightShift);
+        self.b = self.c +% (self.c << LeftShift);
+        self.c = std.math.rotl(u64, self.c, Rotation) +% tmp;
+        return tmp;
+    }
+
+    pub fn seed(self: *Sfc64, init_s: u64) void {
+        self.a = init_s;
+        self.b = init_s;
+        self.c = init_s;
+        self.counter = 1;
+        var i: u32 = 0;
+        while (i < 12) : (i += 1) {
+            _ = self.next();
+        }
+    }
+
+    fn fill(r: *std.rand.Random, buf: []u8) void {
+        const self = @fieldParentPtr(Sfc64, "random", r);
+
+        var i: usize = 0;
+        const aligned_len = buf.len - (buf.len & 7);
+
+        // Complete 8 byte segments.
+        while (i < aligned_len) : (i += 8) {
+            var n = self.next();
+            comptime var j: usize = 0;
+            inline while (j < 8) : (j += 1) {
+                buf[i + j] = @truncate(u8, n);
+                n >>= 8;
+            }
+        }
+
+        // Remaining. (cuts the stream)
+        if (i != buf.len) {
+            var n = self.next();
+            while (i < buf.len) : (i += 1) {
+                buf[i] = @truncate(u8, n);
+                n >>= 8;
+            }
+        }
+    }
+};
 const FlatHashMap = @import("hashmap");
 
 fn getState(self: *const Sfc64) [4]u64 {
@@ -19,16 +85,16 @@ fn setState(self: *Sfc64, state: [4]u64) void {
     self.counter = state[3];
 }
 
-const wyhash64 = std.hash_map.getAutoHashFn(u64);
-const wyhashi32 = std.hash_map.getAutoHashFn(i32);
+//const wyhash64 = std.hash_map.getAutoHashFn(u64);
+//const wyhashi32 = std.hash_map.getAutoHashFn(i32);
 
-// fn wyhash64(n: u64) u32 {
-//     return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&n)));
-// }
+fn wyhash64(n: u64) u64 {
+    return std.hash.Wyhash.hash(0, std.mem.asBytes(&n));
+}
 
-// fn wyhashi32(n: i32) u32 {
-//     return @truncate(u32, std.hash.Wyhash.hash(0, std.mem.asBytes(&n)));
-// }
+fn wyhashi32(n: i32) u64 {
+    return std.hash.Wyhash.hash(0, std.mem.asBytes(&n));
+}
 
 fn wyhashstr(s: []const u8) u32 {
     return @truncate(u32, Wyhash.hash(0, s));
@@ -53,7 +119,7 @@ fn eqlstr(a: []const u8, b: []const u8) bool {
     return true;
 }
 
-fn iterate(allocator: var) void {
+fn iterate(allocator: anytype) void {
     const num_iters = 50000;
 
     var result: u64 = 0;
@@ -63,42 +129,44 @@ fn iterate(allocator: var) void {
     const seed = 123;
     var rng = Sfc64.init(seed);
 
-    warn("iterate while adding");
+    warn("iterate while adding", .{});
     var timer = Timer.start() catch unreachable;
     var i: u64 = 0;
     while (i < num_iters) : (i += 1) {
-        const key = rng.next();
+        const key = rng.random.int(u64);
         _ = map.putOrUpdate(key, i) catch unreachable;
-        for (map.toSliceConst()) |kv| {
+        var it = map.iterator();
+        while (it.next()) |kv| {
             result += kv.value;
         }
     }
     var elapsed = timer.read();
     if (result != 20833333325000) std.os.abort();
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     rng.seed(seed);
-    warn("iterate while removing");
+    warn("iterate while removing", .{});
     timer.reset();
     i = 0;
     while (i < num_iters) : (i += 1) {
         _ = map.remove(rng.next());
-        for (map.toSliceConst()) |kv| {
+        var it = map.iterator();
+        while (it.next()) |kv| {
             result += kv.value;
         }
     }
     elapsed = timer.read();
     assert(map.count() == 0);
     if (result != 62498750000000) std.os.abort();
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 }
 
-fn insert(allocator: var) void {
+fn insert(allocator: anytype) void {
     const num_iters = 100 * 1000 * 1000;
 
     var rng = Sfc64.init(213);
 
-    warn("insert 100M int");
+    warn("insert 100M int", .{});
     var timer = Timer.start() catch unreachable;
     var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
 
@@ -109,16 +177,16 @@ fn insert(allocator: var) void {
     }
     var elapsed = timer.read();
     std.testing.expectEqual(map.count(), 98841586);
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
-    warn("clear 100M int");
+    warn("clear 100M int", .{});
     timer.reset();
     map.clear();
     elapsed = timer.read();
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     const state = getState(&rng);
-    warn("reinsert 100M int");
+    warn("reinsert 100M int", .{});
     timer.reset();
     i = 0;
     while (i < num_iters) : (i += 1) {
@@ -127,9 +195,9 @@ fn insert(allocator: var) void {
     }
     elapsed = timer.read();
     std.testing.expectEqual(map.count(), 98843646);
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
-    warn("remove 100M int");
+    warn("remove 100M int", .{});
     setState(&rng, state);
     timer.reset();
     i = 0;
@@ -139,16 +207,16 @@ fn insert(allocator: var) void {
     }
     elapsed = timer.read();
     std.testing.expectEqual(map.count(), 0);
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
-    warn("deinit map");
+    warn("deinit map", .{});
     timer.reset();
     map.deinit();
     elapsed = timer.read();
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 }
 
-fn randomDistinct(allocator: var) void {
+fn randomDistinct(allocator: anytype) void {
     const num_iters = 50 * 1000 * 1000;
     const _5distinct = num_iters / 20;
     const _25distinct = num_iters / 4;
@@ -158,7 +226,7 @@ fn randomDistinct(allocator: var) void {
     var checksum: i32 = 0;
 
     {
-        warn("5% distinct");
+        warn("5% distinct", .{});
         var timer = Timer.start() catch unreachable;
         var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
         defer map.deinit();
@@ -171,11 +239,11 @@ fn randomDistinct(allocator: var) void {
         }
         const elapsed = timer.read();
         std.testing.expectEqual(checksum, 549980587);
-        warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 
     {
-        warn("25% distinct");
+        warn("25% distinct", .{});
         var timer = Timer.start() catch unreachable;
         var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
         defer map.deinit();
@@ -189,11 +257,11 @@ fn randomDistinct(allocator: var) void {
         }
         const elapsed = timer.read();
         std.testing.expectEqual(checksum, 149995671);
-        warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 
     {
-        warn("50% distinct");
+        warn("50% distinct", .{});
         var timer = Timer.start() catch unreachable;
         var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
         defer map.deinit();
@@ -207,11 +275,11 @@ fn randomDistinct(allocator: var) void {
         }
         const elapsed = timer.read();
         std.testing.expectEqual(checksum, 99996161);
-        warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 
     {
-        warn("100% distinct");
+        warn("100% distinct", .{});
         var timer = Timer.start() catch unreachable;
         var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
         defer map.deinit();
@@ -225,11 +293,11 @@ fn randomDistinct(allocator: var) void {
         }
         const elapsed = timer.read();
         std.testing.expectEqual(checksum, 50291772);
-        warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 }
 
-fn randomInsertRemove(allocator: var) void {
+fn randomInsertRemove(allocator: anytype) void {
     var rng = Sfc64.init(999);
 
     const masks = [_]u64{
@@ -253,7 +321,7 @@ fn randomInsertRemove(allocator: var) void {
     while (i < 6) : (i += 1) {
         const bit_mask = masks[i];
         var verifier: u64 = 0;
-        warn("{} bits, {}M cycles", bit_count[i], u32(max_n / 1000000));
+        warn("{} bits, {}M cycles", .{ bit_count[i], u32(max_n / 1000000) });
 
         var timer = Timer.start() catch unreachable;
         var j: u32 = 0;
@@ -263,16 +331,16 @@ fn randomInsertRemove(allocator: var) void {
         }
         const elapsed = timer.read();
         std.testing.expectEqual(map.count(), expected_final_sizes[i]);
-        warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 }
 
 /// /!\ Leaks big amounts of memory !!
-fn randomInsertRemoveStrings(allocator: var, max_n: u64, length: u64, mask: u32, expected: u64) void {
+fn randomInsertRemoveStrings(allocator: anytype, max_n: u64, length: u64, mask: u32, expected: u64) void {
     var rng = Sfc64.init(123);
     var verifier: u64 = 0;
 
-    warn("{} bytes ", length);
+    warn("{} bytes ", .{length});
 
     var str = allocator.alloc(u8, length) catch unreachable;
     for (str) |*c| c.* = 'x';
@@ -299,16 +367,16 @@ fn randomInsertRemoveStrings(allocator: var, max_n: u64, length: u64, mask: u32,
     }
     const elapsed = timer.read();
     std.testing.expectEqual(expected, verifier);
-    warn(" {d:.3}s\n", @intToFloat(f64, elapsed) / time.second);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 }
 
-fn randomFind(allocator: var, num_rand: u32, mask: u64, num_insert: u64, find_per_insert: u64, expected: u64) void {
+fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, find_per_insert: u64, expected: u64) void {
     const total = 4;
     const sequential = total - num_rand;
 
     const find_per_iter = find_per_insert * total;
 
-    warn("{}% success, {x} ", (sequential * 100) / total, mask);
+    warn("{}% success, {x} ", .{ (sequential * 100) / total, mask });
     var rng = Sfc64.init(123);
 
     var num_found: u64 = 0;
@@ -353,13 +421,13 @@ fn randomFind(allocator: var, num_rand: u32, mask: u64, num_insert: u64, find_pe
 
         const elapsed = timer.read();
         std.testing.expectEqual(expected, num_found);
-        warn(" {d:.3}ns\n", @intToFloat(f64, elapsed) / @intToFloat(f64, num_insert * find_per_insert));
+        warn(" {d:.3}ns\n", .{@intToFloat(f64, elapsed) / @intToFloat(f64, num_insert * find_per_insert)});
     }
 }
 
 pub fn main() void {
-    // const allocator = std.heap.c_allocator;
-    const allocator = std.heap.direct_allocator;
+    const allocator = std.heap.c_allocator;
+    //const allocator = std.heap.page_allocator;
 
     iterate(allocator);
     insert(allocator);
