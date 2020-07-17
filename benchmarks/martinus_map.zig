@@ -5,6 +5,9 @@ const warn = std.debug.warn;
 const Timer = time.Timer;
 const Wyhash = std.heap.Wyhash;
 
+// Copy of std.rand.Sfc64 with a public next() function. The random API is
+// slower than just calling next() and these benchmarks only require getting
+// consecutive u64's.
 pub const Sfc64 = struct {
     random: std.rand.Random,
 
@@ -73,17 +76,6 @@ pub const Sfc64 = struct {
     }
 };
 const FlatHashMap = @import("hashmap");
-
-fn getState(self: *const Sfc64) [4]u64 {
-    return [4]u64{ self.a, self.b, self.c, self.counter };
-}
-
-fn setState(self: *Sfc64, state: [4]u64) void {
-    self.a = state[0];
-    self.b = state[1];
-    self.c = state[2];
-    self.counter = state[3];
-}
 
 //const wyhash64 = std.hash_map.getAutoHashFn(u64);
 //const wyhashi32 = std.hash_map.getAutoHashFn(i32);
@@ -185,7 +177,7 @@ fn insert(allocator: anytype) void {
     elapsed = timer.read();
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
-    const state = getState(&rng);
+    const state = rng;
     warn("reinsert 100M int", .{});
     timer.reset();
     i = 0;
@@ -198,7 +190,7 @@ fn insert(allocator: anytype) void {
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     warn("remove 100M int", .{});
-    setState(&rng, state);
+    rng = state;
     timer.reset();
     i = 0;
     while (i < num_iters) : (i += 1) {
@@ -384,9 +376,8 @@ fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, fin
     for (insert_random[0..num_rand]) |*b| b.* = true;
 
     var other_rng = Sfc64.init(987654321);
-    const state = getState(&other_rng);
-    var find_rng = Sfc64.init(0);
-    setState(&find_rng, state);
+    const state = other_rng;
+    var find_rng = state;
 
     {
         var map = FlatHashMap.HashMap(u64, u64, wyhash64, eqlu64).init(allocator);
@@ -412,7 +403,7 @@ fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, fin
                 find_count += 1;
                 if (find_count > i) {
                     find_count = 0;
-                    setState(&find_rng, state);
+                    find_rng = state;
                 }
                 const key = find_rng.next() & mask;
                 if (map.get(key)) |val| num_found += val.*;
