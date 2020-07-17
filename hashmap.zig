@@ -335,6 +335,7 @@ pub fn HashMap(comptime K: type, comptime V: type, hashFn: fn (key: K) u64, eqlF
             bucket.fill(fingerprint);
             const entry = &self.entries[idx];
             entry.* = .{ .key = key, .value = value };
+            self.size += 1;
 
             return &entry.value;
         }
