@@ -1,9 +1,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const autoHash = std.hash.autoHash;
 const time = std.time;
 const warn = std.debug.warn;
 const Timer = time.Timer;
-const Wyhash = std.heap.Wyhash;
 
 // Copy of std.rand.Sfc64 with a public next() function. The random API is
 // slower than just calling next() and these benchmarks only require getting
@@ -75,47 +75,15 @@ pub const Sfc64 = struct {
         }
     }
 };
-const FlatHashMap = @import("hashmap");
 
-//const wyhash64 = std.hash_map.getAutoHashFn(u64);
-//const wyhashi32 = std.hash_map.getAutoHashFn(i32);
-
-fn wyhash64(n: u64) u64 {
-    return std.hash.Wyhash.hash(0, std.mem.asBytes(&n));
-}
-
-fn wyhashi32(n: i32) u64 {
-    return std.hash.Wyhash.hash(0, std.mem.asBytes(&n));
-}
-
-fn wyhashstr(s: []const u8) u32 {
-    return @truncate(u32, Wyhash.hash(0, s));
-}
-
-inline fn eqlu64(a: u64, b: u64) bool {
-    return a == b;
-}
-
-inline fn eqli32(a: i32, b: i32) bool {
-    return a == b;
-}
-
-fn eqlstr(a: []const u8, b: []const u8) bool {
-    if (a.ptr == b.ptr and a.len == b.len) return true;
-    if (a.len != b.len) return false;
-
-    for (a) |c, i| {
-        if (c != b[i]) return false;
-    }
-
-    return true;
-}
+const AutoHashMap = @import("hashmap").AutoHashMap;
+//const AutoHashMap = std.AutoHashMap;
 
 fn iterate(allocator: anytype) void {
     const num_iters = 50000;
 
     var result: u64 = 0;
-    var map = FlatHashMap.HashMap(u64, u64, wyhash64, eqlu64).init(allocator);
+    var map = AutoHashMap(u64, u64).init(allocator);
     defer map.deinit();
 
     const seed = 123;
@@ -125,8 +93,8 @@ fn iterate(allocator: anytype) void {
     var timer = Timer.start() catch unreachable;
     var i: u64 = 0;
     while (i < num_iters) : (i += 1) {
-        const key = rng.random.int(u64);
-        _ = map.putOrUpdate(key, i) catch unreachable;
+        const key = rng.next();
+        map.put(key, i) catch unreachable;
         var it = map.iterator();
         while (it.next()) |kv| {
             result += kv.value;
@@ -160,12 +128,12 @@ fn insert(allocator: anytype) void {
 
     warn("insert 100M int", .{});
     var timer = Timer.start() catch unreachable;
-    var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
+    var map = AutoHashMap(i32, i32).init(allocator);
 
     var i: i32 = 0;
     while (i < num_iters) : (i += 1) {
         const key = @bitCast(i32, @truncate(u32, rng.next()));
-        _ = map.putOrUpdate(key, 0) catch unreachable;
+        map.put(key, 0) catch unreachable;
     }
     var elapsed = timer.read();
     std.testing.expectEqual(map.count(), 98841586);
@@ -173,7 +141,7 @@ fn insert(allocator: anytype) void {
 
     warn("clear 100M int", .{});
     timer.reset();
-    map.clear();
+    map.clearRetainingCapacity();
     elapsed = timer.read();
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
@@ -183,7 +151,7 @@ fn insert(allocator: anytype) void {
     i = 0;
     while (i < num_iters) : (i += 1) {
         const key = @bitCast(i32, @truncate(u32, rng.next()));
-        _ = map.putOrUpdate(key, 0) catch unreachable;
+        map.put(key, 0) catch unreachable;
     }
     elapsed = timer.read();
     std.testing.expectEqual(map.count(), 98843646);
@@ -214,77 +182,34 @@ fn randomDistinct(allocator: anytype) void {
     const _25distinct = num_iters / 4;
     const _50distinct = num_iters / 2;
 
+    const settings = .{
+        .{ .max = _5distinct, .txt = "5% distinct", .sum = 549980587 },
+        .{ .max = _25distinct, .txt = "25% distinct", .sum = 149995671 },
+        .{ .max = _50distinct, .txt = "50% distinct", .sum = 99996161 },
+        .{ .max = 0xFFFFFFFF, .txt = "100% distinct", .sum = 50291772 },
+    };
+
     var rng = Sfc64.init(123);
-    var checksum: i32 = 0;
 
-    {
-        warn("5% distinct", .{});
+    inline for (settings) |setting| {
+        warn(setting.txt, .{});
+
+        var checksum: i32 = 0;
         var timer = Timer.start() catch unreachable;
-        var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
+        var map = AutoHashMap(i32, i32).init(allocator);
         defer map.deinit();
+
         var i: u32 = 0;
         while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, rng.random.uintLessThan(u32, _5distinct));
-            var n = map.getOrPut(key, 0) catch unreachable;
-            n.* += 1;
-            checksum += n.*;
+            const key = @bitCast(i32, rng.random.uintLessThan(u32, setting.max));
+            var res = map.getOrPutValue(key, 0) catch unreachable;
+            res.value += 1;
+            checksum += res.value;
         }
-        const elapsed = timer.read();
-        std.testing.expectEqual(checksum, 549980587);
-        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
-    }
 
-    {
-        warn("25% distinct", .{});
-        var timer = Timer.start() catch unreachable;
-        var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
-        defer map.deinit();
-        checksum = 0;
-        var i: u32 = 0;
-        while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, rng.random.uintLessThan(u32, _25distinct));
-            var n = map.getOrPut(key, 0) catch unreachable;
-            n.* += 1;
-            checksum += n.*;
-        }
         const elapsed = timer.read();
-        std.testing.expectEqual(checksum, 149995671);
-        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
-    }
 
-    {
-        warn("50% distinct", .{});
-        var timer = Timer.start() catch unreachable;
-        var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
-        defer map.deinit();
-        checksum = 0;
-        var i: u32 = 0;
-        while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, rng.random.uintLessThan(u32, _50distinct));
-            var n = map.getOrPut(key, 0) catch unreachable;
-            n.* += 1;
-            checksum += n.*;
-        }
-        const elapsed = timer.read();
-        std.testing.expectEqual(checksum, 99996161);
-        warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
-    }
-
-    {
-        warn("100% distinct", .{});
-        var timer = Timer.start() catch unreachable;
-        var map = FlatHashMap.HashMap(i32, i32, wyhashi32, eqli32).init(allocator);
-        defer map.deinit();
-        checksum = 0;
-        var i: u32 = 0;
-        while (i < num_iters) : (i += 1) {
-            const key = @intCast(i32, @truncate(u32, rng.next()));
-            var n = map.getOrPut(key, 0) catch unreachable;
-            n.* += 1;
-            checksum += n.*;
-        }
-        const elapsed = timer.read();
-        std.testing.expectEqual(checksum, 50291772);
+        std.testing.expectEqual(checksum, setting.sum);
         warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 }
@@ -306,20 +231,20 @@ fn randomInsertRemove(allocator: anytype) void {
 
     var rnd_bit_idx: u32 = 0;
 
-    var map = FlatHashMap.HashMap(u64, u64, wyhash64, eqlu64).init(allocator);
+    var map = AutoHashMap(u64, u64).init(allocator);
     defer map.deinit();
 
     var i: u32 = 0;
     while (i < 6) : (i += 1) {
         const bit_mask = masks[i];
         var verifier: u64 = 0;
-        warn("{} bits, {}M cycles", .{ bit_count[i], u32(max_n / 1000000) });
+        warn("{} bits, {}M cycles", .{ bit_count[i], max_n / 1000000 });
 
         var timer = Timer.start() catch unreachable;
         var j: u32 = 0;
         while (j < max_n) : (j += 1) {
             _ = map.getOrPut(rng.next() & bit_mask, j) catch unreachable;
-            map.remove(rng.next() & bit_mask);
+            _ = map.remove(rng.next() & bit_mask);
         }
         const elapsed = timer.read();
         std.testing.expectEqual(map.count(), expected_final_sizes[i]);
@@ -340,7 +265,7 @@ fn randomInsertRemoveStrings(allocator: anytype, max_n: u64, length: u64, mask: 
     const strData32 = @ptrToInt(@ptrCast(*u32, @alignCast(4, &str[0]))) + idx32 * @sizeOf(u32);
 
     var timer = Timer.start() catch unreachable;
-    var map = FlatHashMap.HashMap([]const u8, []const u8, wyhashstr, eqlstr).init(allocator);
+    var map = AutoHashMap([]const u8, []const u8).init(allocator);
     defer map.deinit();
 
     var i: u32 = 0;
@@ -380,7 +305,7 @@ fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, fin
     var find_rng = state;
 
     {
-        var map = FlatHashMap.HashMap(u64, u64, wyhash64, eqlu64).init(allocator);
+        var map = AutoHashMap(u64, u64).init(allocator);
         var i: u64 = 0;
         var find_count: u64 = 0;
 
@@ -391,9 +316,9 @@ fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, fin
             for (insert_random) |isRandomToInsert| {
                 const val = other_rng.next();
                 if (isRandomToInsert) {
-                    _ = map.putOrUpdate(rng.next() & mask, 1) catch unreachable;
+                    map.put(rng.next() & mask, 1) catch unreachable;
                 } else {
-                    _ = map.putOrUpdate(val & mask, 1) catch unreachable;
+                    map.put(val & mask, 1) catch unreachable;
                 }
                 i += 1;
             }
@@ -406,7 +331,7 @@ fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, fin
                     find_rng = state;
                 }
                 const key = find_rng.next() & mask;
-                if (map.get(key)) |val| num_found += val.*;
+                if (map.get(key)) |val| num_found += val;
             }
         }
 
