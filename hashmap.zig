@@ -285,11 +285,13 @@ pub fn HashMap(
             result.entry.value = value;
         }
 
-        fn internalGet(self: *const Self, key: K, hash: Hash) ?V {
+        /// Get an optional pointer to the value associated with key, if present.
+        pub fn get(self: *const Self, key: K) ?V {
             if (self.size == 0) {
-                return null; // TODO better without branch ?
+                return null;
             }
 
+            const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
             var idx = hash & mask;
@@ -307,12 +309,6 @@ pub fn HashMap(
             }
 
             return null;
-        }
-
-        /// Get an optional pointer to the value associated with key, if present.
-        pub fn get(self: *const Self, key: K) ?V {
-            const hash = hashFn(key);
-            return self.internalGet(key, hash);
         }
 
         pub fn getOrPut(self: *Self, key: K) !GetOrPutResult {
