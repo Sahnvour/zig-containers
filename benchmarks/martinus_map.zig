@@ -169,6 +169,19 @@ fn insert(allocator: anytype) void {
     std.testing.expectEqual(map.count(), 0);
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
+    warn("reinsert 100M int", .{});
+    rng = state;
+    map.clearRetainingCapacity();
+    timer.reset();
+    i = 0;
+    while (i < num_iters) : (i += 1) {
+        const key = @bitCast(i32, @truncate(u32, rng.next()));
+        map.put(key, 0) catch unreachable;
+    }
+    elapsed = timer.read();
+    std.testing.expectEqual(map.count(), 98843646);
+    warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
+
     warn("deinit map", .{});
     timer.reset();
     map.deinit();
