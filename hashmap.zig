@@ -208,7 +208,15 @@ pub fn HashMap(
         }
 
         pub fn clearRetainingCapacity(self: *Self) void {
-            self.initMetadatas();
+            if (self.metadata) |_| {
+                self.initMetadatas();
+                self.size = 0;
+                self.available = 0;
+            }
+        }
+
+        pub fn clearAndFree(self: *Self, allocator: *Allocator) void {
+            self.deallocate(allocator);
             self.size = 0;
             self.available = 0;
         }
@@ -531,6 +539,8 @@ test "clearRetainingCapacity" {
     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
     defer map.deinit();
 
+    map.clearRetainingCapacity();
+
     try map.put(1, 1);
     expectEqual(map.get(1).?, 1);
     expectEqual(map.size, 1);
@@ -538,6 +548,7 @@ test "clearRetainingCapacity" {
     const cap = map.capacity();
     expect(cap > 0);
 
+    map.clearRetainingCapacity();
     map.clearRetainingCapacity();
     expectEqual(map.size, 0);
     expectEqual(map.capacity(), cap);
