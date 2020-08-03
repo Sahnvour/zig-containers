@@ -243,7 +243,20 @@ pub fn HashMap(
             return .{ .hm = self };
         }
 
-        fn internalPut(self: *Self, key: K, value: V, hash: Hash) void {
+        /// Insert an entry in the map. Assumes it is not already present.
+        pub fn putNoClobber(self: *Self, key: K, value: V) !void {
+            assert(!self.contains(key));
+            try self.ensureCapacity(1);
+
+            self.putAssumeCapacityNoClobber(key, value);
+        }
+
+        /// Insert an entry in the map. Assumes it is not already present,
+        /// and that no allocation is needed.
+        pub fn putAssumeCapacityNoClobber(self: *Self, key: K, value: V) void {
+            assert(!self.contains(key));
+
+            const hash = hashFn(key);
             const mask = self.capacity() - 1;
             var idx = hash & mask;
 
@@ -265,64 +278,11 @@ pub fn HashMap(
             self.size += 1;
         }
 
-        /// Insert an entry in the map. Assumes it is not already present.
-        pub fn putNoClobber(self: *Self, key: K, value: V) !void {
-            assert(!self.contains(key));
-            try self.ensureCapacity(1);
-
-            self.putNoGrow(key, value);
-        }
-
-        /// Insert an entry in the map. Assumes it is not already present,
-        /// and that no allocation is needed.
-        pub fn putNoGrow(self: *Self, key: K, value: V) void {
-            assert(!self.contains(key));
-
-            const hash = hashFn(key);
-            self.internalPut(key, value, hash);
-        }
-
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
         /// Returns true if the key was already present.
         pub fn put(self: *Self, key: K, value: V) !void {
-            try self.ensureCapacity(1); // Should this go after the 'get' part, at the cost of complicating the code ? Would it even be an actual optimization ?
-
-            const hash = hashFn(key);
-            const mask = self.capacity() - 1;
-            const fingerprint = Metadata.takeFingerprint(hash);
-            var idx = @truncate(u32, hash) & mask;
-
-            var first_tombstone_idx: ?Size = null;
-            var metadata = self.metadata.? + idx;
-            while (metadata[0].isUsed() or metadata[0].isTombstone()) {
-                if (first_tombstone_idx == null and metadata[0].isTombstone()) {
-                    first_tombstone_idx = idx;
-                }
-
-                if (metadata[0].fingerprint == fingerprint) {
-                    const entry = &self.entries()[idx];
-                    if (eqlFn(entry.key, key)) {
-                        entry.value = value;
-                        return;
-                    }
-                }
-                idx = (idx + 1) & mask;
-                metadata = self.metadata.? + idx;
-            }
-
-            if (first_tombstone_idx) |i| {
-                // Cheap try to lower probing lengths after deletions. Recycle a tombstone.
-                idx = i;
-                metadata = self.metadata.? + i;
-            } else {
-                // We're using a slot previously free.
-                self.available -= 1;
-            }
-
-            self.size += 1;
-
-            metadata[0].fill(fingerprint);
-            self.entries()[idx] = Entry{ .key = key, .value = value };
+            const result = try self.getOrPut(key);
+            result.entry.value = value;
         }
 
         fn internalGet(self: *const Self, key: K, hash: Hash) ?V {
@@ -459,7 +419,7 @@ pub fn HashMap(
                 while (i < old_capacity) : (i += 1) {
                     if (metadata[i].isUsed()) {
                         const entry = &entr[i];
-                        map.putNoGrow(entry.key, entry.value);
+                        map.putAssumeCapacityNoClobber(entry.key, entry.value);
                     }
                 }
             }
