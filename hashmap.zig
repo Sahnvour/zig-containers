@@ -564,45 +564,6 @@ test "clearRetainingCapacity" {
     expect(!map.contains(1));
 }
 
-// test "put and get with precomputed hash" {
-//     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
-//     defer map.deinit();
-
-//     var i: u32 = 0;
-//     while (i < 8) : (i += 1) {
-//         try map.putHashed(i, i * 3 + 1, hashu32(i));
-//     }
-
-//     i = 0;
-//     while (i < 8) : (i += 1) {
-//         expectEqual(map.get(i).?.*, i * 3 + 1);
-//     }
-
-//     i = 0;
-//     while (i < 8) : (i += 1) {
-//         expectEqual(map.getHashed(i, hashu32(i)).?.*, i * 3 + 1);
-//     }
-// }
-
-// This test can only be run by removing the asserts checking hash consistency
-// in putHashed and getHashed.
-// test "put and get with long collision chain" {
-//     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
-//     defer map.deinit();
-//     try map.reserve(32);
-
-//     // Using a fixed arbitrary hash for every value, we force collisions.
-//     var i: u32 = 0;
-//     while (i < 16) : (i += 1) {
-//         try map.putHashed(i, i, 0x12345678);
-//     }
-
-//     i = 0;
-//     while (i < 16) : (i += 1) {
-//         expectEqual(map.getHashed(i, 0x12345678).?.*, i);
-//     }
-// }
-
 test "grow" {
     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
     defer map.deinit();
@@ -613,9 +574,6 @@ test "grow" {
     while (i < growTo) : (i += 1) {
         try map.put(i, i);
     }
-    // this depends on the maximum load factor
-    // warn("\ncap {} next {}\n", map.capacity(), ceilPowerOfTwo(u32, growTo));
-    // expect(map.capacity() == ceilPowerOfTwo(u32, growTo));
     expectEqual(map.size, growTo);
 
     i = 0;
