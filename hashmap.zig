@@ -34,11 +34,159 @@ pub fn getAutoEqlFn(comptime K: type) (fn (K, K) bool) {
 }
 
 pub fn AutoHashMap(comptime K: type, comptime V: type) type {
-    return HashMap(K, V, comptime getAutoHashFn(K), getAutoEqlFn(V), 80);
+    return HashMap(K, V, getAutoHashFn(K), getAutoEqlFn(V), DefaultMaxLoadPercentage);
+}
+
+pub const DefaultMaxLoadPercentage = 80;
+
+pub fn HashMap(
+    comptime K: type,
+    comptime V: type,
+    comptime hashFn: fn (key: K) u64,
+    comptime eqlFn: fn (a: K, b: K) bool,
+    comptime MaxLoadPercentage: u64,
+) type {
+    return struct {
+        unmanaged: Unmanaged,
+        allocator: *Allocator,
+
+        pub const Unmanaged = HashMapUnmanaged(K, V, hashFn, eqlFn, MaxLoadPercentage);
+        pub const Entry = Unmanaged.Entry;
+        pub const Hash = Unmanaged.Hash;
+        pub const Iterator = Unmanaged.Iterator;
+        pub const Size = Unmanaged.Size;
+        pub const GetOrPutResult = Unmanaged.GetOrPutResult;
+
+        const Self = @This();
+
+        pub fn init(allocator: *Allocator) Self {
+            return .{
+                .unmanaged = .{},
+                .allocator = allocator,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.unmanaged.deinit(self.allocator);
+            self.* = undefined;
+        }
+
+        pub fn clearRetainingCapacity(self: *Self) void {
+            return self.unmanaged.clearRetainingCapacity();
+        }
+
+        pub fn clearAndFree(self: *Self) void {
+            return self.unmanaged.clearAndFree(self.allocator);
+        }
+
+        pub fn count(self: Self) usize {
+            return self.unmanaged.count();
+        }
+
+        pub fn iterator(self: *const Self) Iterator {
+            return self.unmanaged.iterator();
+        }
+
+        /// If key exists this function cannot fail.
+        /// If there is an existing item with `key`, then the result
+        /// `Entry` pointer points to it, and found_existing is true.
+        /// Otherwise, puts a new item with undefined value, and
+        /// the `Entry` pointer points to it. Caller should then initialize
+        /// the value (but not the key).
+        pub fn getOrPut(self: *Self, key: K) !GetOrPutResult {
+            return self.unmanaged.getOrPut(self.allocator, key);
+        }
+
+        /// If there is an existing item with `key`, then the result
+        /// `Entry` pointer points to it, and found_existing is true.
+        /// Otherwise, puts a new item with undefined value, and
+        /// the `Entry` pointer points to it. Caller should then initialize
+        /// the value (but not the key).
+        /// If a new entry needs to be stored, this function asserts there
+        /// is enough capacity to store it.
+        pub fn getOrPutAssumeCapacity(self: *Self, key: K) GetOrPutResult {
+            return self.unmanaged.getOrPutAssumeCapacity(key);
+        }
+
+        pub fn getOrPutValue(self: *Self, key: K, value: V) !*Entry {
+            return self.unmanaged.getOrPutValue(self.allocator, key, value);
+        }
+
+        /// Increases capacity, guaranteeing that insertions up until the
+        /// `expected_count` will not cause an allocation, and therefore cannot fail.
+        pub fn ensureCapacity(self: *Self, new_capacity: usize) !void {
+            return self.unmanaged.ensureCapacity(self.allocator, new_capacity);
+        }
+
+        /// Returns the number of total elements which may be present before it is
+        /// no longer guaranteed that no allocations will be performed.
+        pub fn capacity(self: *Self) usize {
+            return self.unmanaged.capacity();
+        }
+
+        /// Clobbers any existing data. To detect if a put would clobber
+        /// existing data, see `getOrPut`.
+        pub fn put(self: *Self, key: K, value: V) !void {
+            return self.unmanaged.put(self.allocator, key, value);
+        }
+
+        /// Inserts a key-value pair into the hash map, asserting that no previous
+        /// entry with the same key is already present
+        pub fn putNoClobber(self: *Self, key: K, value: V) !void {
+            return self.unmanaged.putNoClobber(self.allocator, key, value);
+        }
+
+        /// Asserts there is enough capacity to store the new key-value pair.
+        /// Clobbers any existing data. To detect if a put would clobber
+        /// existing data, see `getOrPutAssumeCapacity`.
+        pub fn putAssumeCapacity(self: *Self, key: K, value: V) void {
+            return self.unmanaged.putAssumeCapacity(key, value);
+        }
+
+        /// Asserts there is enough capacity to store the new key-value pair.
+        /// Asserts that it does not clobber any existing data.
+        /// To detect if a put would clobber existing data, see `getOrPutAssumeCapacity`.
+        pub fn putAssumeCapacityNoClobber(self: *Self, key: K, value: V) void {
+            return self.unmanaged.putAssumeCapacityNoClobber(key, value);
+        }
+
+        pub fn get(self: Self, key: K) ?V {
+            return self.unmanaged.get(key);
+        }
+
+        pub fn contains(self: Self, key: K) bool {
+            return self.unmanaged.contains(key);
+        }
+
+        /// If there is an `Entry` with a matching key, it is deleted from
+        /// the hash map, and then returned from this function.
+        pub fn remove(self: *Self, key: K) ?Entry {
+            return self.unmanaged.remove(key);
+        }
+
+        /// Asserts there is an `Entry` with matching key, deletes it from the hash map,
+        /// and discards it.
+        pub fn removeAssertDiscard(self: *Self, key: K) void {
+            return self.unmanaged.removeAssertDiscard(key);
+        }
+
+        pub fn clone(self: Self) !Self {
+            var other = try self.unmanaged.clone(self.allocator);
+            return other.promote(self.allocator);
+        }
+
+        pub fn reserve(self: *Self, new_size: Size) !void {
+            try self.unmanaged.reserve(self.allocator, new_size);
+        }
+    };
 }
 
 /// A HashMap based on open addressing and linear probing.
-pub fn HashMap(
+/// A lookup or modification typically occurs only 2 cache misses.
+/// No order is guaranteed and any modification invalidates live iterators.
+/// It achieves good performance with quite high load factors (by default,
+/// grow is triggered at 80% full) and only one byte of overhead per element.
+pub fn HashMapUnmanaged(
     comptime K: type,
     comptime V: type,
     hashFn: fn (key: K) u64,
@@ -62,11 +210,13 @@ pub fn HashMap(
         /// `MaxLoadPercentage`.
         available: Size = 0,
 
-        allocator: *Allocator,
-
         /// Capacity of the first grow when bootstrapping the hashmap.
         const MinimalCapacity = 8;
+
+        // This hashmap is specially designed for sizes that fit in a u32.
         const Size = u32;
+        // u64 hashes guarantee us that the fingerprint bits will never be used
+        // to compute the index of a slot, maximizing the use of entropy.
         const Hash = u64;
 
         const Entry = struct {
@@ -90,6 +240,8 @@ pub fn HashMap(
         /// only we use the `log2(capacity)` lowest bits from the hash to determine
         /// a slot index, but we use 6 more bits to quickly resolve collisions
         /// when multiple elements with different hashes end up wanting to be in / the same slot.
+        /// Not using the equality function means we don't have to read into
+        /// the entries array, avoiding a likely cache miss.
         const Metadata = packed struct {
             const FingerPrint = u6;
 
@@ -161,22 +313,29 @@ pub fn HashMap(
             found_existing: bool,
         };
 
+        pub const Managed = HashMap(K, V, hashFn, eqlFn, MaxLoadPercentage);
+
+        pub fn promote(self: Self, allocator: *Allocator) Managed {
+            return .{
+                .unmanaged = self,
+                .allocator = allocator,
+            };
+        }
+
         fn isUnderMaxLoadPercentage(size: Size, cap: Size) bool {
             return size * 100 < MaxLoadPercentage * cap;
         }
 
         pub fn init(allocator: *Allocator) Self {
-            return .{
-                .allocator = allocator,
-            };
+            return .{};
         }
 
-        pub fn deinit(self: *Self) void {
-            self.deallocate();
+        pub fn deinit(self: *Self, allocator: *Allocator) void {
+            self.deallocate(allocator);
             self.* = undefined;
         }
 
-        fn deallocate(self: *Self) void {
+        fn deallocate(self: *Self, allocator: *Allocator) void {
             if (self.metadata == null) return;
 
             const cap = self.capacity();
@@ -190,7 +349,7 @@ pub fn HashMap(
             var slice: []u8 = undefined;
             slice.ptr = @intToPtr([*]u8, @ptrToInt(self.header()));
             slice.len = total_size;
-            self.allocator.free(slice);
+            allocator.free(slice);
 
             self.metadata = null;
             self.available = 0;
@@ -202,9 +361,9 @@ pub fn HashMap(
             return new_cap;
         }
 
-        pub fn reserve(self: *Self, new_size: Size) !void {
+        pub fn reserve(self: *Self, allocator: *Allocator, new_size: Size) !void {
             if (!isUnderMaxLoadPercentage(new_size, self.capacity()))
-                try self.grow(capacityForSize(new_size));
+                try self.grow(allocator, capacityForSize(new_size));
         }
 
         pub fn clearRetainingCapacity(self: *Self) void {
@@ -244,9 +403,9 @@ pub fn HashMap(
         }
 
         /// Insert an entry in the map. Assumes it is not already present.
-        pub fn putNoClobber(self: *Self, key: K, value: V) !void {
+        pub fn putNoClobber(self: *Self, allocator: *Allocator, key: K, value: V) !void {
             assert(!self.contains(key));
-            try self.ensureCapacity(1);
+            try self.ensureCapacity(allocator, 1);
 
             self.putAssumeCapacityNoClobber(key, value);
         }
@@ -280,8 +439,8 @@ pub fn HashMap(
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
         /// Returns true if the key was already present.
-        pub fn put(self: *Self, key: K, value: V) !void {
-            const result = try self.getOrPut(key);
+        pub fn put(self: *Self, allocator: *Allocator, key: K, value: V) !void {
+            const result = try self.getOrPut(allocator, key);
             result.entry.value = value;
         }
 
@@ -311,8 +470,8 @@ pub fn HashMap(
             return null;
         }
 
-        pub fn getOrPut(self: *Self, key: K) !GetOrPutResult {
-            try self.ensureCapacity(1); // Should this go after the 'get' part, at the cost of complicating the code ? Would it even be an actual optimization ?
+        pub fn getOrPut(self: *Self, allocator: *Allocator, key: K) !GetOrPutResult {
+            try self.ensureCapacity(allocator, 1);
 
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
@@ -340,8 +499,8 @@ pub fn HashMap(
             return GetOrPutResult{ .entry = entry, .found_existing = false };
         }
 
-        pub fn getOrPutValue(self: *Self, key: K, value: V) !*Entry {
-            const res = try self.getOrPut(key);
+        pub fn getOrPutValue(self: *Self, allocator: *Allocator, key: K, value: V) !*Entry {
+            const res = try self.getOrPut(allocator, key);
             if (!res.found_existing) res.entry.value = value;
             return res.entry;
         }
@@ -416,20 +575,20 @@ pub fn HashMap(
             return @truncate(Size, max_load - self.available);
         }
 
-        fn ensureCapacity(self: *Self, new_count: Size) !void {
+        fn ensureCapacity(self: *Self, allocator: *Allocator, new_count: Size) !void {
             if (new_count > self.available) {
                 const new_cap = if (self.capacity() == 0) MinimalCapacity else capacityForSize(self.load() + new_count);
-                try self.grow(new_cap);
+                try self.grow(allocator, new_cap);
             }
         }
 
-        pub fn clone(self: *Self, allocator: *Allocator) !Self {
-            var other = Self{ .allocator = allocator };
+        pub fn clone(self: Self, allocator: *Allocator) !Self {
+            var other = Self{};
             if (self.size == 0)
                 return other;
 
             const new_cap = capacityForSize(self.size);
-            try other.allocate(new_cap);
+            try other.allocate(allocator, new_cap);
             other.initMetadatas();
             other.available = @truncate(u32, (new_cap * MaxLoadPercentage) / 100);
 
@@ -448,13 +607,13 @@ pub fn HashMap(
             return other;
         }
 
-        fn grow(self: *Self, new_capacity: Size) !void {
+        fn grow(self: *Self, allocator: *Allocator, new_capacity: Size) !void {
             assert(new_capacity > self.capacity());
             assert(std.math.isPowerOfTwo(new_capacity));
 
-            var map = Self{ .allocator = self.allocator };
-            defer map.deinit();
-            try map.allocate(new_capacity);
+            var map = Self{};
+            defer map.deinit(allocator);
+            try map.allocate(allocator, new_capacity);
             map.initMetadatas();
             map.available = @truncate(u32, (new_capacity * MaxLoadPercentage) / 100);
 
@@ -477,7 +636,7 @@ pub fn HashMap(
             std.mem.swap(Self, self, &map);
         }
 
-        fn allocate(self: *Self, new_capacity: Size) !void {
+        fn allocate(self: *Self, allocator: *Allocator, new_capacity: Size) !void {
             const meta_size = @sizeOf(Header) + new_capacity * @sizeOf(Metadata);
 
             const alignment = @alignOf(Entry) - 1;
@@ -485,7 +644,7 @@ pub fn HashMap(
 
             const total_size = meta_size + entries_size;
 
-            const slice = try self.allocator.alignedAlloc(u8, @alignOf(Header), total_size);
+            const slice = try allocator.alignedAlloc(u8, @alignOf(Header), total_size);
             const ptr = @ptrToInt(slice.ptr);
 
             const metadata = ptr + @sizeOf(Header);
@@ -541,7 +700,7 @@ test "reserve" {
     expectEqual(map.capacity(), 16);
     try map.reserve(129);
     expectEqual(map.capacity(), 256);
-    expectEqual(map.size, 0);
+    expectEqual(map.count(), 0);
 }
 
 test "clearRetainingCapacity" {
@@ -552,14 +711,14 @@ test "clearRetainingCapacity" {
 
     try map.put(1, 1);
     expectEqual(map.get(1).?, 1);
-    expectEqual(map.size, 1);
+    expectEqual(map.count(), 1);
 
     const cap = map.capacity();
     expect(cap > 0);
 
     map.clearRetainingCapacity();
     map.clearRetainingCapacity();
-    expectEqual(map.size, 0);
+    expectEqual(map.count(), 0);
     expectEqual(map.capacity(), cap);
     expect(!map.contains(1));
 }
@@ -574,7 +733,7 @@ test "grow" {
     while (i < growTo) : (i += 1) {
         try map.put(i, i);
     }
-    expectEqual(map.size, growTo);
+    expectEqual(map.count(), growTo);
 
     i = 0;
     var it = map.iterator();
@@ -594,19 +753,19 @@ test "clone" {
     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
     defer map.deinit();
 
-    var a = try map.clone(std.testing.allocator);
+    var a = try map.clone();
     defer a.deinit();
 
-    expectEqual(a.size, 0);
+    expectEqual(a.count(), 0);
 
     try a.put(1, 1);
     try a.put(2, 2);
     try a.put(3, 3);
 
-    var b = try a.clone(std.testing.allocator);
+    var b = try a.clone();
     defer b.deinit();
 
-    expectEqual(b.size, 3);
+    expectEqual(b.count(), 3);
     expectEqual(b.get(1), 1);
     expectEqual(b.get(2), 2);
     expectEqual(b.get(3), 3);
@@ -617,11 +776,11 @@ test "reserve with existing elements" {
     defer map.deinit();
 
     try map.put(0, 0);
-    expectEqual(map.size, 1);
-    expectEqual(map.capacity(), @TypeOf(map).MinimalCapacity);
+    expectEqual(map.count(), 1);
+    expectEqual(map.capacity(), @TypeOf(map).Unmanaged.MinimalCapacity);
 
     try map.reserve(65);
-    expectEqual(map.size, 1);
+    expectEqual(map.count(), 1);
     expectEqual(map.capacity(), 128);
 }
 
@@ -648,7 +807,7 @@ test "remove" {
             _ = map.remove(i);
         }
     }
-    expectEqual(map.size, 10);
+    expectEqual(map.count(), 10);
     var it = map.iterator();
     while (it.next()) |kv| {
         expectEqual(kv.key, kv.value);
@@ -684,7 +843,7 @@ test "reverse removes" {
         }
     }
 
-    expectEqual(map.size, 0);
+    expectEqual(map.count(), 0);
 }
 
 test "multiple removes on same metadata" {
@@ -746,12 +905,12 @@ test "put and remove loop in random order" {
         for (keys.items) |key| {
             try map.put(key, key);
         }
-        expectEqual(map.size, size);
+        expectEqual(map.count(), size);
 
         for (keys.items) |key| {
             _ = map.remove(key);
         }
-        expectEqual(map.size, 0);
+        expectEqual(map.count(), 0);
     }
 }
 
