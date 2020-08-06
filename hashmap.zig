@@ -423,6 +423,31 @@ pub fn HashMap(
             }
         }
 
+        pub fn clone(self: *Self, allocator: *Allocator) !Self {
+            var other = Self{ .allocator = allocator };
+            if (self.size == 0)
+                return other;
+
+            const new_cap = capacityForSize(self.size);
+            try other.allocate(new_cap);
+            other.initMetadatas();
+            other.available = @truncate(u32, (new_cap * MaxLoadPercentage) / 100);
+
+            var i: Size = 0;
+            var metadata = self.metadata.?;
+            var entr = self.entries();
+            while (i < self.capacity()) : (i += 1) {
+                if (metadata[i].isUsed()) {
+                    const entry = &entr[i];
+                    other.putAssumeCapacityNoClobber(entry.key, entry.value);
+                    if (other.size == self.size)
+                        break;
+                }
+            }
+
+            return other;
+        }
+
         fn grow(self: *Self, new_capacity: Size) !void {
             assert(new_capacity > self.capacity());
             assert(std.math.isPowerOfTwo(new_capacity));
@@ -442,6 +467,8 @@ pub fn HashMap(
                     if (metadata[i].isUsed()) {
                         const entry = &entr[i];
                         map.putAssumeCapacityNoClobber(entry.key, entry.value);
+                        if (map.size == self.size)
+                            break;
                     }
                 }
             }
@@ -603,6 +630,28 @@ test "grow" {
     while (i < growTo) : (i += 1) {
         expectEqual(map.get(i).?, i);
     }
+}
+
+test "clone" {
+    var map = AutoHashMap(u32, u32).init(std.testing.allocator);
+    defer map.deinit();
+
+    var a = try map.clone(std.testing.allocator);
+    defer a.deinit();
+
+    expectEqual(a.size, 0);
+
+    try a.put(1, 1);
+    try a.put(2, 2);
+    try a.put(3, 3);
+
+    var b = try a.clone(std.testing.allocator);
+    defer b.deinit();
+
+    expectEqual(b.size, 3);
+    expectEqual(b.get(1), 1);
+    expectEqual(b.get(2), 2);
+    expectEqual(b.get(3), 3);
 }
 
 test "reserve with existing elements" {
