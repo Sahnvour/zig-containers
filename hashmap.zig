@@ -351,11 +351,37 @@ pub fn HashMap(
             return self.get(key) != null;
         }
 
-        /// Remove the value associated with key, if present. Returns wether
-        /// an element was removed.
-        pub fn remove(self: *Self, key: K) bool {
-            assert(self.size > 0);
-            // assert(self.contains(key)); TODO make two versions of remove
+        /// If there is an `Entry` with a matching key, it is deleted from
+        /// the hash map, and then returned from this function.
+        pub fn remove(self: *Self, key: K) ?Entry {
+            const hash = hashFn(key);
+            const mask = self.capacity() - 1;
+            const fingerprint = Metadata.takeFingerprint(hash);
+            var idx = hash & mask;
+
+            var metadata = self.metadata.? + idx;
+            while (metadata[0].isUsed() or metadata[0].isTombstone()) {
+                if (metadata[0].isUsed() and metadata[0].fingerprint == fingerprint) {
+                    const entry = &self.entries()[idx];
+                    if (eqlFn(entry.key, key)) {
+                        const removed_entry = entry.*;
+                        metadata[0].remove();
+                        entry.* = undefined;
+                        self.size -= 1;
+                        return removed_entry;
+                    }
+                }
+                idx = (idx + 1) & mask;
+                metadata = self.metadata.? + idx;
+            }
+
+            return null;
+        }
+
+        /// Asserts there is an `Entry` with matching key, deletes it from the hash map,
+        /// and discards it.
+        pub fn removeAssertDiscard(self: *Self, key: K) void {
+            assert(self.contains(key));
 
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
@@ -370,14 +396,14 @@ pub fn HashMap(
                         metadata[0].remove();
                         entry.* = undefined;
                         self.size -= 1;
-                        return true;
+                        return;
                     }
                 }
                 idx = (idx + 1) & mask;
                 metadata = self.metadata.? + idx;
             }
 
-            return false;
+            unreachable;
         }
 
         fn initMetadatas(self: *Self) void {
