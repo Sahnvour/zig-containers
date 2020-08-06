@@ -193,19 +193,26 @@ pub fn HashMapUnmanaged(
     eqlFn: fn (a: K, b: K) bool,
     comptime MaxLoadPercentage: u64,
 ) type {
+    comptime assert(MaxLoadPercentage > 0 and MaxLoadPercentage < 100);
+
     return struct {
         const Self = @This();
 
+        // This is actually a midway pointer to the single buffer containing
+        // a `Header` field, the `Metadata`s and `Entry`s.
+        // At `-@sizeOf(Header)` is the Header field.
+        // At `sizeOf(Metadata) * capacity + offset`, which is pointed to by
+        // self.header().entries, is the array of entries.
+        // This means that the hashmap only holds one live allocation, to
+        // reduce memory fragmentation and struct size.
         /// Pointer to the metadata.
-        /// This is actually a midway pointer to the single buffer containing
-        /// a `Header` field, the `Metadata`s and `Entry`s.
-        /// At `-@sizeOf(Header)` is the Header field.
-        /// At `sizeOf(Metadata) * capacity + offset` are the entries.
         metadata: ?[*]Metadata = null,
 
         /// Current number of elements in the hashmap.
         size: Size = 0,
 
+        // Having a countdown to grow reduces the number of instructions to
+        // execute when determining if the hashmap has enough capacity already.
         /// Number of available slots before a grow is needed to satisfy the
         /// `MaxLoadPercentage`.
         available: Size = 0,
@@ -215,6 +222,7 @@ pub fn HashMapUnmanaged(
 
         // This hashmap is specially designed for sizes that fit in a u32.
         const Size = u32;
+
         // u64 hashes guarantee us that the fingerprint bits will never be used
         // to compute the index of a slot, maximizing the use of entropy.
         const Hash = u64;
@@ -569,6 +577,8 @@ pub fn HashMapUnmanaged(
             @memset(@ptrCast([*]u8, self.metadata.?), 0, @sizeOf(Metadata) * self.capacity());
         }
 
+        // This counts the number of occupied slots, used + tombstones, which is
+        // what has to stay under the MaxLoadPercentage of capacity.
         fn load(self: *const Self) Size {
             const max_load = (self.capacity() * MaxLoadPercentage) / 100;
             assert(max_load >= self.available);
