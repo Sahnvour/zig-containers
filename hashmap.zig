@@ -135,8 +135,8 @@ pub fn HashMap(
 
         /// Increases capacity, guaranteeing that insertions up until the
         /// `expected_count` will not cause an allocation, and therefore cannot fail.
-        pub fn ensureCapacity(self: *Self, new_capacity: usize) !void {
-            return self.unmanaged.ensureCapacity(self.allocator, new_capacity);
+        pub fn ensureCapacity(self: *Self, expected_count: Size) !void {
+            return self.unmanaged.ensureCapacity(self.allocator, expected_count);
         }
 
         /// Returns the number of total elements which may be present before it is
@@ -194,10 +194,6 @@ pub fn HashMap(
         pub fn clone(self: Self) !Self {
             var other = try self.unmanaged.clone(self.allocator);
             return other.promote(self.allocator);
-        }
-
-        pub fn reserve(self: *Self, new_size: Size) !void {
-            try self.unmanaged.reserve(self.allocator, new_size);
         }
     };
 }
@@ -390,7 +386,7 @@ pub fn HashMapUnmanaged(
             return new_cap;
         }
 
-        pub fn reserve(self: *Self, allocator: *Allocator, new_size: Size) !void {
+        pub fn ensureCapacity(self: *Self, allocator: *Allocator, new_size: Size) !void {
             if (!isUnderMaxLoadPercentage(new_size, self.capacity()))
                 try self.grow(allocator, capacityForSize(new_size));
         }
@@ -434,7 +430,7 @@ pub fn HashMapUnmanaged(
         /// Insert an entry in the map. Assumes it is not already present.
         pub fn putNoClobber(self: *Self, allocator: *Allocator, key: K, value: V) !void {
             assert(!self.contains(key));
-            try self.ensureCapacity(allocator, 1);
+            try self.growIfNeeded(allocator, 1);
 
             self.putAssumeCapacityNoClobber(key, value);
         }
@@ -500,7 +496,7 @@ pub fn HashMapUnmanaged(
         }
 
         pub fn getOrPut(self: *Self, allocator: *Allocator, key: K) !GetOrPutResult {
-            try self.ensureCapacity(allocator, 1);
+            try self.growIfNeeded(allocator, 1);
 
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
@@ -606,7 +602,7 @@ pub fn HashMapUnmanaged(
             return @truncate(Size, max_load - self.available);
         }
 
-        fn ensureCapacity(self: *Self, allocator: *Allocator, new_count: Size) !void {
+        fn growIfNeeded(self: *Self, allocator: *Allocator, new_count: Size) !void {
             if (new_count > self.available) {
                 const new_cap = if (self.capacity() == 0) MinimalCapacity else capacityForSize(self.load() + new_count);
                 try self.grow(allocator, new_cap);
@@ -723,13 +719,13 @@ test "basic usage" {
     expectEqual(total, sum);
 }
 
-test "reserve" {
+test "ensureCapacity" {
     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
     defer map.deinit();
 
-    try map.reserve(9);
+    try map.ensureCapacity(9);
     expectEqual(map.capacity(), 16);
-    try map.reserve(129);
+    try map.ensureCapacity(129);
     expectEqual(map.capacity(), 256);
     expectEqual(map.count(), 0);
 }
@@ -802,7 +798,7 @@ test "clone" {
     expectEqual(b.get(3), 3);
 }
 
-test "reserve with existing elements" {
+test "ensureCapacity with existing elements" {
     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
     defer map.deinit();
 
@@ -810,16 +806,16 @@ test "reserve with existing elements" {
     expectEqual(map.count(), 1);
     expectEqual(map.capacity(), @TypeOf(map).Unmanaged.MinimalCapacity);
 
-    try map.reserve(65);
+    try map.ensureCapacity(65);
     expectEqual(map.count(), 1);
     expectEqual(map.capacity(), 128);
 }
 
-test "reserve satisfies max load factor" {
+test "ensureCapacity satisfies max load factor" {
     var map = AutoHashMap(u32, u32).init(std.testing.allocator);
     defer map.deinit();
 
-    try map.reserve(127);
+    try map.ensureCapacity(127);
     expectEqual(map.capacity(), 256);
 }
 
