@@ -34,7 +34,28 @@ pub fn getAutoEqlFn(comptime K: type) (fn (K, K) bool) {
 }
 
 pub fn AutoHashMap(comptime K: type, comptime V: type) type {
-    return HashMap(K, V, getAutoHashFn(K), getAutoEqlFn(V), DefaultMaxLoadPercentage);
+    return HashMap(K, V, getAutoHashFn(K), getAutoEqlFn(K), DefaultMaxLoadPercentage);
+}
+
+pub fn AutoHashMapUnmanaged(comptime K: type, comptime V: type) type {
+    return HashMapUnmanaged(K, V, getAutoHashFn(K), getAutoEqlFn(K), DefaultMaxLoadPercentage);
+}
+
+/// Builtin hashmap for strings as keys.
+pub fn StringHashMap(comptime V: type) type {
+    return HashMap([]const u8, V, hashString, eqlString, DefaultMaxLoadPercentage);
+}
+
+pub fn StringHashMapUnmanaged(comptime V: type) type {
+    return HashMapUnmanaged([]const u8, V, hashString, eqlString, DefaultMaxLoadPercentage);
+}
+
+pub fn eqlString(a: []const u8, b: []const u8) bool {
+    return mem.eql(u8, a, b);
+}
+
+pub fn hashString(s: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, s);
 }
 
 pub const DefaultMaxLoadPercentage = 80;
