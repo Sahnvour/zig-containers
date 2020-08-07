@@ -171,8 +171,23 @@ pub fn HashMap(
             return self.unmanaged.putAssumeCapacityNoClobber(key, value);
         }
 
+        /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        pub fn fetchPut(self: *Self, key: K, value: V) !?Entry {
+            return self.unmanaged.fetchPut(self.allocator, key, value);
+        }
+
+        /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        /// If insertion happuns, asserts there is enough capacity without allocating.
+        pub fn fetchPutAssumeCapacity(self: *Self, key: K, value: V) ?Entry {
+            return self.unmanaged.fetchPutAssumeCapacity(key, value);
+        }
+
         pub fn get(self: Self, key: K) ?V {
             return self.unmanaged.get(key);
+        }
+
+        pub fn getEntry(self: Self, key: K) ?*Entry {
+            return self.unmanaged.getEntry(key);
         }
 
         pub fn contains(self: Self, key: K) bool {
@@ -462,6 +477,54 @@ pub fn HashMapUnmanaged(
             self.size += 1;
         }
 
+        /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        pub fn fetchPut(self: *Self, allocator: *Allocator, key: K, value: V) !?Entry {
+            const gop = try self.getOrPut(allocator, key);
+            var result: ?Entry = null;
+            if (gop.found_existing) {
+                result = gop.entry.*;
+            }
+            gop.entry.value = value;
+            return result;
+        }
+
+        /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        /// If insertion happens, asserts there is enough capacity without allocating.
+        pub fn fetchPutAssumeCapacity(self: *Self, key: K, value: V) ?Entry {
+            const gop = self.getOrPutAssumeCapacity(key);
+            var result: ?Entry = null;
+            if (gop.found_existing) {
+                result = gop.entry.*;
+            }
+            gop.entry.value = value;
+            return result;
+        }
+
+        pub fn getEntry(self: Self, key: K) ?*Entry {
+            if (self.size == 0) {
+                return null;
+            }
+
+            const hash = hashFn(key);
+            const mask = self.capacity() - 1;
+            const fingerprint = Metadata.takeFingerprint(hash);
+            var idx = hash & mask;
+
+            var metadata = self.metadata.? + idx;
+            while (metadata[0].isUsed() or metadata[0].isTombstone()) {
+                if (metadata[0].isUsed() and metadata[0].fingerprint == fingerprint) {
+                    const entry = &self.entries()[idx];
+                    if (eqlFn(entry.key, key)) {
+                        return entry;
+                    }
+                }
+                idx = (idx + 1) & mask;
+                metadata = self.metadata.? + idx;
+            }
+
+            return null;
+        }
+
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
         /// Returns true if the key was already present.
         pub fn put(self: *Self, allocator: *Allocator, key: K, value: V) !void {
@@ -470,7 +533,7 @@ pub fn HashMapUnmanaged(
         }
 
         /// Get an optional pointer to the value associated with key, if present.
-        pub fn get(self: *const Self, key: K) ?V {
+        pub fn get(self: Self, key: K) ?V {
             if (self.size == 0) {
                 return null;
             }
@@ -498,6 +561,10 @@ pub fn HashMapUnmanaged(
         pub fn getOrPut(self: *Self, allocator: *Allocator, key: K) !GetOrPutResult {
             try self.growIfNeeded(allocator, 1);
 
+            return self.getOrPutAssumeCapacity(key);
+        }
+
+        pub fn getOrPutAssumeCapacity(self: *Self, key: K) GetOrPutResult {
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
