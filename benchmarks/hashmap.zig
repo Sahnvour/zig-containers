@@ -5,7 +5,6 @@ const meta = std.meta;
 const TypeId = builtin.TypeId;
 
 const ArrayList = std.ArrayList;
-const direct_allocator = std.heap.direct_allocator;
 
 const bench = @import("bench");
 const benchmark = bench.benchmark;
@@ -17,15 +16,15 @@ const Context = bench.Context;
 const HashMap = @import("hashmap").HashMap;
 const SliceableHashMap = @import("sliceable_hashmap").HashMap;
 
-var arena = std.heap.ArenaAllocator.init(direct_allocator);
-const allocator = direct_allocator;
+var heap = std.heap.HeapAllocator.init();
+var allocator = &heap.allocator;
 
 pub fn eqlu32(x: u32, y: u32) bool {
     return x == y;
 }
 
-fn putHelper(map: var, key: var, value: var) void {
-    const put_type = @typeOf(map.put);
+fn putHelper(map: anytype, key: anytype, value: anytype) void {
+    const put_type = @TypeOf(map.put);
     const return_type = @typeInfo(put_type).BoundFn.return_type.?;
     const payload_type = @typeInfo(return_type).ErrorUnion.payload;
 
@@ -36,12 +35,12 @@ fn putHelper(map: var, key: var, value: var) void {
     }
 }
 
-fn removeHelper(map: var, key: var) void {
+fn removeHelper(map: anytype, key: anytype) void {
     doNotOptimize(map.remove(key));
 }
 
-fn reserveHelper(map: var, size: u32) void {
-    const Map = @typeOf(map);
+fn reserveHelper(map: anytype, size: u32) void {
+    const Map = @TypeOf(map);
 
     if (comptime meta.trait.hasFn("reserve")(Map)) {
         map.reserve(size) catch unreachable;
@@ -147,7 +146,7 @@ fn eraseRandomOrder(comptime Map: type) MapBenchFn {
             }
 
             var rng = std.rand.DefaultPrng.init(0);
-            std.rand.Random.shuffle(&rng.random, u32, keys.toSlice());
+            std.rand.Random.shuffle(&rng.random, u32, keys.items);
 
             while (ctx.runExplicitTiming()) {
                 var i: u32 = 0;
@@ -157,7 +156,7 @@ fn eraseRandomOrder(comptime Map: type) MapBenchFn {
 
                 ctx.startTimer();
                 defer ctx.stopTimer();
-                for (keys.toSliceConst()) |key| {
+                for (keys.items) |key| {
                     removeHelper(&map, key);
                 }
             }
@@ -181,14 +180,14 @@ fn iterate(comptime Map: type) MapBenchFn {
                 keys.append(i) catch unreachable;
             }
 
-            for (keys.toSlice()) |key| {
+            for (keys.items) |key| {
                 putHelper(&map, key, key);
             }
 
             while (ctx.run()) {
                 var sum: u64 = 0;
                 if (comptime meta.trait.hasFn("toSlice")(Map)) {
-                    for (map.toSlice()) |kv| {
+                    for (map.items) |kv| {
                         sum += kv.value;
                     }
                 } else {
@@ -208,12 +207,12 @@ fn iterate(comptime Map: type) MapBenchFn {
 
 const sizes = [_]u32{ 5, 25, 100, 500, 1000, 15000, 50000 };
 
-const Flat = HashMap(u32, u32, wyhash64, eqlu32);
-const Sliceable = SliceableHashMap(u32, u32, wyhash, eqlu32);
-const Std = std.AutoHashMap(u32, u32);
+const Flat = HashMap(u32, u32, wyhash, eqlu32, 80);
+//const Sliceable = SliceableHashMap(u32, u32, wyhash, eqlu32);
+const Std = std.HashMap(u32, u32, wyhash, eqlu32, 80);
 
 const wyhash = std.hash_map.getAutoHashFn(u32);
-const wyhash64 = struct {
+const wyhash32 = struct {
     fn hash(key: u32) u64 {
         var hasher = std.hash.Wyhash.init(0);
         std.hash.autoHash(&hasher, key);
@@ -221,11 +220,11 @@ const wyhash64 = struct {
     }
 }.hash;
 
-const BenchFn = @typeOf(insertSequential);
+const BenchFn = @TypeOf(insertSequential);
 fn compareFlatAndStd(comptime name: []const u8, comptime benchFn: BenchFn) void {
-    benchmarkArgs(name ++ " Flat", comptime benchFn(Flat), sizes);
-    benchmarkArgs(name ++ " Slic", comptime benchFn(Sliceable), sizes);
-    benchmarkArgs(name ++ " Std ", comptime benchFn(Std), sizes);
+    //benchmarkArgs(name ++ " Flat", comptime benchFn(Flat), &sizes);
+    //benchmarkArgs(name ++ " Slic", comptime benchFn(Sliceable), &sizes);
+    benchmarkArgs(name ++ " Std ", comptime benchFn(Std), &sizes);
 }
 
 // TODO

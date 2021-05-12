@@ -15,8 +15,8 @@ pub const Context = struct {
     state: State,
     nanoseconds: u64,
 
-    const HeatingTime = time.second / 2;
-    const RunTime = time.second / 2;
+    const HeatingTime = time.ns_per_s / 2;
+    const RunTime = time.ns_per_s / 2;
 
     const State = enum {
         None,
@@ -109,7 +109,7 @@ pub const Context = struct {
 
 pub fn benchmark(name: comptime []const u8, f: BenchFn) void {
     var ctx = Context.init();
-    @noInlineCall(f, &ctx);
+    @call(.{.never_inline}, f, &ctx);
 
     var unit: u64 = undefined;
     var unit_name: []const u8 = undefined;
@@ -119,24 +119,24 @@ pub fn benchmark(name: comptime []const u8, f: BenchFn) void {
     if (avg_time <= time.microsecond) {
         unit = 1;
         unit_name = "ns";
-    } else if (avg_time <= time.millisecond) {
+    } else if (avg_time <= time.ns_per_ms) {
         unit = time.microsecond;
         unit_name = "us";
     } else {
-        unit = time.millisecond;
+        unit = time.ns_per_ms;
         unit_name = "ms";
     }
 
-    warn("{}: avg {d:.3}{} ({} iterations)\n", name, ctx.averageTime(unit), unit_name, ctx.iter);
+    warn("{s}: avg {d:.3}{s} ({} iterations)\n", .{ name, ctx.averageTime(unit), unit_name, ctx.iter });
 }
 
 fn benchArgFn(comptime argType: type) type {
     return fn (*Context, argType) void;
 }
 
-fn argTypeFromFn(comptime f: var) type {
-    comptime const F = @typeOf(f);
-    if (@typeId(F) != TypeId.Fn) {
+fn argTypeFromFn(comptime f: anytype) type {
+    comptime const F = @TypeOf(f);
+    if (@typeInfo(F) != TypeId.Fn) {
         @compileError("Argument must be a function.");
     }
 
@@ -148,36 +148,43 @@ fn argTypeFromFn(comptime f: var) type {
     return fnInfo.args[1].arg_type.?;
 }
 
-pub fn benchmarkArgs(comptime name: []const u8, comptime f: var, comptime args: []const argTypeFromFn(f)) void {
+pub fn benchmarkArgs(comptime name: []const u8, comptime f: anytype, comptime args: []const argTypeFromFn(f)) void {
     inline for (args) |a| {
         var ctx = Context.init();
-        @noInlineCall(f, &ctx, a);
+        const m = std.builtin.CallOptions{ .modifier = .never_inline };
+        @call(m, f, .{ &ctx, a });
 
         var unit: u64 = undefined;
         var unit_name: []const u8 = undefined;
         const avg_time = ctx.averageTime(1);
         assert(avg_time >= 0);
 
-        if (avg_time <= time.microsecond) {
+        if (avg_time <= time.ns_per_us) {
             unit = 1;
             unit_name = "ns";
-        } else if (avg_time <= time.millisecond) {
-            unit = time.microsecond;
+        } else if (avg_time <= time.ns_per_ms) {
+            unit = time.ns_per_us;
             unit_name = "us";
         } else {
-            unit = time.millisecond;
+            unit = time.ns_per_ms;
             unit_name = "ms";
         }
-        warn("{} <{}>: avg {d:.3}{} ({} iterations)\n", name, if (@typeOf(a) == type) @typeName(a) else a, ctx.averageTime(unit), unit_name, ctx.iter);
+        warn("{s} <{}>: avg {d:.3}{s} ({} iterations)\n", .{
+            name,
+            if (@TypeOf(a) == type) @typeName(a) else a,
+            ctx.averageTime(unit),
+            unit_name,
+            ctx.iter,
+        });
     }
 }
 
-pub fn doNotOptimize(value: var) void {
+pub fn doNotOptimize(value: anytype) void {
     // LLVM triggers an assert if we pass non-trivial types as inputs for the
     // asm volatile expression.
     // Workaround until asm support is better on Zig's end.
-    const T = @typeOf(value);
-    const typeId = @typeId(T);
+    const T = @TypeOf(value);
+    const typeId = @typeInfo(T);
     switch (typeId) {
         .Bool, .Int, .Float => {
             asm volatile (""
@@ -200,18 +207,14 @@ pub fn doNotOptimize(value: var) void {
 }
 
 pub fn clobberMemory() void {
-    asm volatile (""
-        :
-        :
-        : "memory"
-    );
+    asm volatile ("" ::: "memory");
 }
 
 test "benchmark" {
     const benchSleep57 = struct {
         fn benchSleep57(ctx: *Context) void {
             while (ctx.run()) {
-                time.sleep(57 * time.millisecond);
+                time.sleep(57 * time.ns_per_ms);
             }
         }
     }.benchSleep57;
@@ -224,7 +227,7 @@ test "benchmarkArgs" {
     const benchSleep = struct {
         fn benchSleep(ctx: *Context, ms: u32) void {
             while (ctx.run()) {
-                time.sleep(ms * time.millisecond);
+                time.sleep(ms * time.ns_per_ms);
             }
         }
     }.benchSleep;
@@ -237,7 +240,7 @@ test "benchmarkArgs types" {
     const benchMin = struct {
         fn benchMin(ctx: *Context, comptime intType: type) void {
             while (ctx.run()) {
-                time.sleep(std.math.min(37, 48) * time.millisecond);
+                time.sleep(std.math.min(37, 48) * time.ns_per_ms);
             }
         }
     }.benchMin;
@@ -250,10 +253,10 @@ test "benchmark custom timing" {
     const sleep = struct {
         fn sleep(ctx: *Context) void {
             while (ctx.runExplicitTiming()) {
-                time.sleep(30 * time.millisecond);
+                time.sleep(30 * time.ns_per_ms);
                 ctx.startTimer();
                 defer ctx.stopTimer();
-                time.sleep(10 * time.millisecond);
+                time.sleep(10 * time.ns_per_ms);
             }
         }
     }.sleep;

@@ -1,6 +1,5 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const autoHash = std.hash.autoHash;
 const time = std.time;
 const warn = std.debug.warn;
 const Timer = time.Timer;
@@ -76,8 +75,7 @@ pub const Sfc64 = struct {
     }
 };
 
-const AutoHashMap = @import("hashmap").AutoHashMap;
-//const AutoHashMap = std.AutoHashMap;
+const AutoHashMap = std.AutoHashMap;
 
 fn iterate(allocator: anytype) void {
     const num_iters = 50000;
@@ -136,7 +134,7 @@ fn insert(allocator: anytype) void {
         map.put(key, 0) catch unreachable;
     }
     var elapsed = timer.read();
-    std.testing.expectEqual(map.count(), 98841586);
+    std.debug.assert(map.count() == 98841586);
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     warn("clear 100M int", .{});
@@ -154,7 +152,7 @@ fn insert(allocator: anytype) void {
         map.put(key, 0) catch unreachable;
     }
     elapsed = timer.read();
-    std.testing.expectEqual(map.count(), 98843646);
+    std.debug.assert(map.count() == 98843646);
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     warn("remove 100M int", .{});
@@ -166,7 +164,7 @@ fn insert(allocator: anytype) void {
         _ = map.remove(key);
     }
     elapsed = timer.read();
-    std.testing.expectEqual(map.count(), 0);
+    std.debug.assert(map.count() == 0);
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     warn("reinsert 100M int", .{});
@@ -179,7 +177,7 @@ fn insert(allocator: anytype) void {
         map.put(key, 0) catch unreachable;
     }
     elapsed = timer.read();
-    std.testing.expectEqual(map.count(), 98843646);
+    std.debug.assert(map.count() == 98843646);
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 
     warn("deinit map", .{});
@@ -222,7 +220,7 @@ fn randomDistinct(allocator: anytype) void {
 
         const elapsed = timer.read();
 
-        std.testing.expectEqual(checksum, setting.sum);
+        std.debug.assert(checksum == setting.sum);
         warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 }
@@ -260,7 +258,7 @@ fn randomInsertRemove(allocator: anytype) void {
             _ = map.remove(rng.next() & bit_mask);
         }
         const elapsed = timer.read();
-        std.testing.expectEqual(map.count(), expected_final_sizes[i]);
+        std.debug.assert(map.count() == expected_final_sizes[i]);
         warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
     }
 }
@@ -296,7 +294,7 @@ fn randomInsertRemoveStrings(allocator: anytype, max_n: u64, length: u64, mask: 
         if (map.remove(str)) verifier += 1;
     }
     const elapsed = timer.read();
-    std.testing.expectEqual(expected, verifier);
+    std.debug.assert(expected == verifier);
     warn(" {d:.3}s\n", .{@intToFloat(f64, elapsed) / time.ns_per_s});
 }
 
@@ -349,7 +347,7 @@ fn randomFind(allocator: anytype, num_rand: u32, mask: u64, num_insert: u64, fin
         }
 
         const elapsed = timer.read();
-        std.testing.expectEqual(expected, num_found);
+        std.debug.assert(expected == num_found);
         warn(" {d:.3}ns\n", .{@intToFloat(f64, elapsed) / @intToFloat(f64, num_insert * find_per_insert)});
     }
 }

@@ -8,7 +8,7 @@ const Allocator = mem.Allocator;
 const builtin = @import("builtin");
 const ceilPowerOfTwo = std.math.ceilPowerOfTwo;
 
-pub fn hashInt(comptime HashInt: type, i: var) HashInt {
+pub fn hashInt(comptime HashInt: type, i: anytype) HashInt {
     var x: HashInt = i;
 
     if (HashInt.bit_count <= 32) {
@@ -38,7 +38,7 @@ pub fn eqlu32(x: u32, y: u32) bool {
     return x == y;
 }
 
-pub fn isPowerOfTwo(i: var) bool {
+pub fn isPowerOfTwo(i: anytype) bool {
     return i & (i - 1) == 0;
 }
 

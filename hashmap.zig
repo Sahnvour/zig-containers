@@ -141,7 +141,7 @@ pub fn HashMap(
 
         /// Returns the number of total elements which may be present before it is
         /// no longer guaranteed that no allocations will be performed.
-        pub fn capacity(self: *Self) usize {
+        pub fn capacity(self: *Self) Size {
             return self.unmanaged.capacity();
         }
 
@@ -457,7 +457,7 @@ pub fn HashMapUnmanaged(
 
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
-            var idx = hash & mask;
+            var idx = @truncate(usize, hash & mask);
 
             var metadata = self.metadata.? + idx;
             while (metadata[0].isUsed()) {
@@ -508,7 +508,7 @@ pub fn HashMapUnmanaged(
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            var idx = hash & mask;
+            var idx = @truncate(usize, hash & mask);
 
             var metadata = self.metadata.? + idx;
             while (metadata[0].isUsed() or metadata[0].isTombstone()) {
@@ -541,7 +541,7 @@ pub fn HashMapUnmanaged(
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            var idx = hash & mask;
+            var idx = @truncate(usize, hash & mask);
 
             var metadata = self.metadata.? + idx;
             while (metadata[0].isUsed() or metadata[0].isTombstone()) {
@@ -568,7 +568,7 @@ pub fn HashMapUnmanaged(
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            var idx = hash & mask;
+            var idx = @truncate(usize, hash & mask);
 
             var metadata = self.metadata.? + idx;
             while (metadata[0].isUsed() or metadata[0].isTombstone()) {
@@ -608,7 +608,7 @@ pub fn HashMapUnmanaged(
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            var idx = hash & mask;
+            var idx = @truncate(usize, hash & mask);
 
             var metadata = self.metadata.? + idx;
             while (metadata[0].isUsed() or metadata[0].isTombstone()) {
@@ -637,7 +637,7 @@ pub fn HashMapUnmanaged(
             const hash = hashFn(key);
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            var idx = hash & mask;
+            var idx = @truncate(usize, hash & mask);
 
             var metadata = self.metadata.? + idx;
             while (metadata[0].isUsed() or metadata[0].isTombstone()) {
